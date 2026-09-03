@@ -1,35 +1,7 @@
 {
-  "name": "gambit",
-  "version": "0.1.0",
+  "name": "gambit-root",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
-  "dependencies": {
-    "@rainbow-me/rainbowkit": "^2.2.11",
-    "@tanstack/react-query": "^5.102.8",
-    "@vercel/blob": "^2.8.0",
-    "@vercel/postgres": "^0.10.0",
-    "@x402/core": "^2.24.0",
-    "@x402/evm": "^2.24.0",
-    "@x402/svm": "^2.24.0",
-    "framer-motion": "^11.0.0",
-    "next": "14.1.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "viem": "^2.21.0",
-    "wagmi": "^2.19.5"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "autoprefixer": "^10.4.0",
-    "postcss": "^8.4.0",
-    "tailwindcss": "^3.4.0",
-    "typescript": "^5.3.0"
+    "install:all": "npm install && cd frontend && npm install"
   }
 }
