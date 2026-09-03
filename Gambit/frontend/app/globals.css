@@ -1,0 +1,236 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Newsreader:ital,opsz,wght@1,6..72,400;1,6..72,500&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Unbounded:wght@400;500;600;700;800;900&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --carbon: #1e2526;
+  --carbon-light: #2a3334;
+  --carbon-lighter: #354042;
+  --teal: #19bea4;
+  --teal-dark: #149e89;
+  --teal-light: #22d4b7;
+  --foam: #d7fafc;
+  --foam-dark: #b0f0f5;
+  --up: #6fcf97;
+  --down: #e07a7a;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--carbon);
+  color: var(--foam);
+  font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--carbon); }
+::-webkit-scrollbar-thumb { background: var(--carbon-lighter); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--teal-dark); }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 4px; }
+
+.font-display { font-family: "Unbounded", ui-sans-serif, system-ui, sans-serif; }
+.font-serif { font-family: "Newsreader", Georgia, serif; }
+.font-ui { font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif; }
+.font-mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+/* ── Film grain overlay ─────────────────── */
+.film-grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+
+/* ── Photo texture layer ────────────────── */
+.photo-texture {
+  background-image: url("https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=1920&q=80");
+  background-size: cover;
+  background-position: center;
+  opacity: 0.1;
+  mix-blend-mode: soft-light;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 35%, black 10%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 35%, black 10%, transparent 75%);
+}
+
+/* ── Duel table panel ────────────────────── */
+.duel-table {
+  background: linear-gradient(180deg, rgba(42,51,52,0.6) 0%, rgba(30,37,38,0.75) 100%);
+  border: 1px solid rgba(25,190,164,0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(215,250,252,0.05),
+    inset 0 -1px 0 rgba(0,0,0,0.15),
+    0 8px 32px rgba(0,0,0,0.3),
+    0 0 60px rgba(25,190,164,0.04);
+}
+
+/* ── Seat ────────────────────────────────── */
+.seat {
+  border: 1px solid rgba(255,255,255,0.04);
+  transition: border-color 0.25s, box-shadow 0.25s, background 0.25s;
+  cursor: pointer;
+}
+.seat:hover { border-color: rgba(255,255,255,0.08); }
+.seat.winner { border-color: rgba(111,207,151,0.3); box-shadow: 0 0 20px rgba(111,207,151,0.08); }
+.seat.loser { opacity: 0.4; border-color: rgba(255,255,255,0.02); }
+
+/* ── Energy line ─────────────────────────── */
+.energy-line {
+  background: linear-gradient(90deg, var(--up), var(--teal), var(--down));
+  height: 1px;
+  opacity: 0.4;
+}
+
+/* ── Pot chip ────────────────────────────── */
+@keyframes pot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(25,190,164,0.2); }
+  50% { box-shadow: 0 0 0 5px rgba(25,190,164,0); }
+}
+.pot-chip { animation: pot-pulse 3s ease-in-out infinite; cursor: pointer; }
+
+/* ── Clock digit roll ────────────────────── */
+@keyframes digit-roll-in {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.digit-roll { animation: digit-roll-in 0.3s ease-out; }
+
+/* ── Chip slide ──────────────────────────── */
+@keyframes chip-slide {
+  from { transform: translateX(-8px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.chip-slide { animation: chip-slide 0.35s ease-out; }
+
+/* ── Sparkline ───────────────────────────── */
+@keyframes spark { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.5; } }
+.sparkline-bar { animation: spark 2s ease-in-out infinite; }
+
+/* ── Ticker ──────────────────────────────── */
+@keyframes ticker-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.animate-ticker { animation: ticker-scroll 35s linear infinite; }
+
+/* ── Pulse dot ───────────────────────────── */
+@keyframes pulse-dot { 0%, 100% { opacity: 0.5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.3); } }
+.animate-pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+/* ── Shimmer ─────────────────────────────── */
+.shimmer {
+  background: linear-gradient(110deg, transparent 25%, rgba(215,250,252,0.1) 45%, transparent 65%);
+  background-size: 200% 100%;
+}
+
+/* ── Arena snap scroll ───────────────────── */
+.arena-scroll { scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.arena-scroll::-webkit-scrollbar { display: none; }
+.arena-card { scroll-snap-align: start; }
+
+/* ── Popover ─────────────────────────────── */
+.popover {
+  background: rgba(30,37,38,0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+
+/* ── Mock UI elements ────────────────────── */
+.mock-input {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--foam);
+}
+.mock-btn {
+  border-radius: 6px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.mock-toggle {
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+/* ── Pointer spotlight ───────────────────── */
+@media (hover: hover) {
+  .pointer-spotlight {
+    position: fixed;
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.03;
+    transition: left 1s ease-out, top 1s ease-out;
+    background: radial-gradient(circle, var(--teal), transparent 70%);
+  }
+}
+
+/* ── Floating marks parallax ─────────────── */
+.float-mark {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0.06;
+  filter: blur(1px);
+}
+
+/* ── How it works panels ─────────────────── */
+.hiw-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.04);
+  transition: border-color 0.4s;
+}
+.hiw-panel:hover { border-color: rgba(25,190,164,0.15); }
+.hiw-panel-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.12;
+  mix-blend-mode: soft-light;
+}
+
+/* ── PFP ring ────────────────────────────── */
+.pfp-ring {
+  box-shadow: 0 0 0 2px var(--carbon), 0 0 0 3px rgba(25,190,164,0.3);
+}
+
+/* ── Diagonal light slash ────────────────── */
+.light-slash {
+  position: absolute;
+  top: -20%;
+  right: -10%;
+  width: 500px;
+  height: 1200px;
+  background: linear-gradient(135deg, transparent 40%, rgba(25,190,164,0.03) 50%, transparent 60%);
+  transform: rotate(-25deg);
+  pointer-events: none;
+}
+
+/* ── Reduced motion ──────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

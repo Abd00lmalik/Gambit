@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.local
+.next/
+out/
+
+# Root-level scripts and reports (not part of Gambit app)
+*.mjs
+*.json
+!Gambit/frontend/package.json
+!Gambit/frontend/next.config.js
+*.md
+!Gambit/TESTING.md
+!Gambit/MANUAL_TESTING_GUIDE.md
+!Gambit/ARCHITECTURE_RESEARCH.md
+!Gambit/ARCHITECTURE_RESEARCH_V2.md
