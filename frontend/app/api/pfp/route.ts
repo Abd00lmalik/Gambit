@@ -34,11 +34,12 @@ export async function POST(req: NextRequest) {
     const ext = file.name.split(".").pop() || "jpg";
 
     const blob = await put(`pfps/${addr}.${ext}`, file, {
-      access: "public",
+      access: "private",
       contentType: file.type,
       addRandomSuffix: false,
     });
 
+    // Store the signed URL directly (works for private blobs)
     await updateProfilePfp(addr, blob.url);
 
     return NextResponse.json({ pfpUrl: blob.url });

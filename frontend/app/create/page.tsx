@@ -7,6 +7,7 @@ import { useAccount } from "wagmi";
 import { useLivePrices } from "@/hooks/useLivePrices";
 import { useIntervalTimer } from "@/hooks/useMarkets";
 import { useDuelFactory } from "@/hooks/useContracts";
+import { useMarketSentiment } from "@/hooks/useMarketSentiment";
 import CountdownTimer from "@/components/CountdownTimer";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
 import { ASSET_INFO, STAKE_OPTIONS } from "@/lib/constants";
@@ -70,8 +71,10 @@ export default function CreateDuelPage() {
 
   const currentPrice = prices.find((p) => p.asset === asset);
   const strike = currentPrice?.price ?? 0;
-  const upProb = currentPrice?.upProbability ?? 0.5;
   const joinDeadline = Math.floor(Date.now() / 1000) + timer.secondsLeft;
+
+  const { sentiment } = useMarketSentiment(selectedMarket?.marketAddress);
+  const upProb = sentiment ? sentiment.upPercent / 100 : 0.5;
 
   const stakeAmount = customStake ? parseFloat(customStake) || 0 : stake;
   const isValid = stakeAmount >= 0.1 && stakeAmount <= 100 && isConnected && !!selectedMarket;

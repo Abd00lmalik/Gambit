@@ -226,73 +226,47 @@ export async function fetchMarketsByInterval(
   limit = 5
 ): Promise<DreamDexMarket[]> {
   const now = Math.floor(Date.now() / 1000);
-  // Fetch more than needed since many may be expired
-  const fetchLimit = Math.max(limit * 5, 20);
-
-  // Query: only future (non-expired) markets, sorted by expiry ascending (nearest first)
-  const queries = [
-    `{
-      Market(
-        where: {
-          marketType: {_eq: "BINARY"},
-          finalized: {_eq: false},
-          voided: {_eq: false},
-          asset: {_eq: "${asset}"},
-          intervalSec: {_eq: ${intervalSec}},
-          expiry: {_gt: ${now}},
-          clobStatus: {_eq: "Trading"}
-        }
-        order_by: {expiry: asc}
-        limit: ${fetchLimit}
-      ) {
-        id marketAddress marketId asset question strike indexPrice
-        intervalSec expiry clobStatus binaryPoolAddress venueId
-        finalized voided oracleQuestionId
+  // GraphQL doesn't support _gt on expiry. Fetch all, sort by expiry desc, filter client-side.
+  const query = `{
+    Market(
+      where: {
+        marketType: {_eq: "BINARY"},
+        finalized: {_eq: false},
+        voided: {_eq: false},
+        asset: {_eq: "${asset}"},
+        intervalSec: {_eq: ${intervalSec}}
       }
-    }`,
-    // Fallback: no clobStatus filter
-    `{
-      Market(
-        where: {
-          marketType: {_eq: "BINARY"},
-          finalized: {_eq: false},
-          voided: {_eq: false},
-          asset: {_eq: "${asset}"},
-          intervalSec: {_eq: ${intervalSec}},
-          expiry: {_gt: ${now}}
-        }
-        order_by: {expiry: asc}
-        limit: ${fetchLimit}
-      ) {
-        id marketAddress marketId asset question strike indexPrice
-        intervalSec expiry clobStatus binaryPoolAddress venueId
-        finalized voided oracleQuestionId
-      }
-    }`,
-  ];
+      order_by: {expiry: desc}
+      limit: 50
+    ) {
+      id marketAddress marketId asset question strike indexPrice
+      intervalSec expiry clobStatus binaryPoolAddress venueId
+      finalized voided oracleQuestionId
+    }
+  }`;
 
   let markets: any[] = [];
 
-  for (const query of queries) {
-    try {
-      const res = await fetch(GRAPHQL_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query }),
-      });
-      const data = await res.json();
-      const result = data?.data?.Market ?? [];
-      if (result.length > 0) {
-        markets = result;
-        break;
-      }
-    } catch (e) {
-      console.warn("DreamDEX query failed, trying fallback:", e);
-    }
+  try {
+    const res = await fetch(GRAPHQL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    const data = await res.json();
+    markets = data?.data?.Market ?? [];
+  } catch (e) {
+    console.warn("DreamDEX query failed:", e);
+    return [];
   }
 
-  const mapped = markets
-    .filter((m: any) => m.marketAddress)
+  // Filter: has address, not expired yet, ideally still Trading
+  const active = markets
+    .filter((m: any) => m.marketAddress && Number(m.expiry) > now)
+    .sort((a: any, b: any) => Number(a.expiry) - Number(b.expiry)); // nearest expiry first
+
+  const mapped = active
+    .slice(0, limit)
     .map((m: any) => ({
       id: m.id,
       marketAddress: m.marketAddress as Address,
@@ -314,14 +288,23 @@ export async function fetchMarketsByInterval(
 
   if (mapped.length === 0) return [];
 
-  // Batch-fetch opening prices for all markets
-  const openingPrices = await fetchOpeningPrices(mapped.map((m: any) => m.id));
+  // Use strike as opening price if available (DreamDEX stores it in strike field)
   for (const m of mapped) {
-    m.openingPrice = openingPrices[m.id.toLowerCase()] ?? null;
+    if (m.strike > 0) {
+      m.openingPrice = m.strike > 100000 ? m.strike / 100 : m.strike;
+    }
   }
 
-  // Return only `limit` results
-  return mapped.slice(0, limit);
+  // Batch-fetch opening prices for markets without strike
+  const needPrices = mapped.filter((m: any) => !m.openingPrice);
+  if (needPrices.length > 0) {
+    const openingPrices = await fetchOpeningPrices(needPrices.map((m: any) => m.id));
+    for (const m of needPrices) {
+      m.openingPrice = openingPrices[m.id.toLowerCase()] ?? null;
+    }
+  }
+
+  return mapped;
 }
 
 export async function fetchLatestIndexPrices(): Promise<
@@ -333,12 +316,10 @@ export async function fetchLatestIndexPrices(): Promise<
       where: {
         marketType: {_eq: "BINARY"},
         finalized: {_eq: false},
-        voided: {_eq: false},
-        expiry: {_gt: ${now}},
-        clobStatus: {_eq: "Trading"}
+        voided: {_eq: false}
       }
-      order_by: {expiry: asc}
-      limit: 20
+      order_by: {expiry: desc}
+      limit: 30
     ) {
       asset
       strike
@@ -362,11 +343,12 @@ export async function fetchLatestIndexPrices(): Promise<
     for (const m of markets) {
       const asset = m.asset;
       if (asset !== "BTC" && asset !== "ETH") continue;
+      if (Number(m.expiry) <= now) continue; // skip expired
       const indexPrice = Number(m.indexPrice);
       const strike = Number(m.strike);
       if (strike <= 0 && indexPrice <= 0) continue;
 
-      const price = indexPrice > 0 ? indexPrice : (strike > 10000 ? strike / 100 : strike / 1000);
+      const price = indexPrice > 0 ? indexPrice : (strike > 100000 ? strike / 100 : strike);
       const interval = Number(m.intervalSec);
 
       let priority = 0;
