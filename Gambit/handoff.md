@@ -1,239 +1,259 @@
 # Gambit — Handoff Document
 
-**Last updated:** 2026-08-29 17:30 UTC  
-**Current phase:** Full E2E flow verified on Somnia testnet. Next: frontend, backend, demo video.
+**Last updated:** 2026-09-04  
+**Current phase:** Live on Vercel (testnet). Full E2E 1v1 duels with reactive auto-settlement working. Squad Pools contract-ready but ParimutuelPoolFactory not yet deployed.
 
 ---
 
 ## Project Summary
 
-Gambit is a social duel layer on DreamDEX Event Contracts (Somnia prediction market DEX). Two players take opposite sides of a binary bet (e.g. "BTC YES 15min"), stake STT (native token), and the winner takes the pot when DreamDEX resolves. Gambit only reads DreamDEX's on-chain resolution as an oracle — it does NOT interact with DreamDEX's order book or token system.
+Gambit is a **prediction game layer** on Somnia testnet with two modes:
+
+1. **1v1 Duels** — Two players take opposite sides of a binary bet (e.g. "Will BTC go UP in 5 minutes?"), stake STT, winner takes the pot when DreamDEX resolves. Fully functional with reactive auto-settlement (~2s latency).
+2. **Squad Pools** — Pool-style prediction where a creator sets up a market and multiple participants join sides. Contract logic complete (EIP-1167 clones, depositUp/Down, pool split, resolve, claim). ParimutuelPoolFactory not yet deployed.
+
+Gambit reads DreamDEX Event Contracts as an oracle and leverages **Somnia reactivity** (`0x0100` precompile) for automatic settlement when markets resolve.
 
 ---
 
-## Decisions Locked
+## Deployed Contracts
 
-| Decision | Value | Rationale |
-|---|---|---|
-| **Stake currency** | STT (native token) | tUSDC is non-standard: `approve()` and `transferFrom()` revert unconditionally; arbitrary contracts can't receive it. Verified via testnet spikes. |
-| **Contract pattern** | EIP-1167 minimal proxy (clone) | ~40k gas per clone vs ~8M for full deploy. One logic contract + factory. |
-| **Resolution oracle** | DreamDEX `payoutNumerators()` | Confirmed on-chain: `[nonzero, 0]` = YES/Up won, `[0, nonzero]` = NO/Down won, `[0,0]` = unresolved. |
-| **Fee model** | Fee-on-payout, 250 bps (2.5%) | Single atomic calculation: `fee = pot * feeBps / 10000`, `winnerPayout = pot - fee`. |
-| **Min stake** | 0.1 STT | Testnet placeholder — easy to change. |
-| **Max stake** | 100 STT | Testnet placeholder — easy to change. |
-| **Settlement** | Permissionless `settle()` | Anyone can call once market is resolved. No liveness dependency. |
-| **Fee recipient** | Configurable at creation time | Factory passes `feeRecipient` to each clone. |
-| **Join deadline** | Configurable per duel (uint256 timestamp) | If B doesn't join by deadline, A can cancel and reclaim. |
-| **Framework** | Foundry, Solidity 0.8.28 | Confirmed: Somnia Shannon testnet supports solc 0.8.28. |
-| **Infra** | Vercel (frontend+backend), no VPS | Polling for live updates, Vercel Cron for optional auto-settle. |
-
----
-
-## Verified Testnet Facts
-
-### Chain
-| Parameter | Value |
-|---|---|
-| Chain name | Somnia Shannon Testnet |
-| Chain ID | `50312` |
-| RPC URL | `https://api.infra.testnet.somnia.network` |
-| Block explorer | `https://shannon-explorer.somnia.network` |
-| Native token | STT (Somnia Test Token) |
-| Faucet | `https://testnet.somnia.network/` |
-
-### DreamDEX Contracts
+### Factory v6 (CURRENT — ACTIVE)
 | Contract | Address |
 |---|---|
-| BinaryMarketsModule | `0x3ecC694Cef705358864a646142ac17A90E29e388` |
-| MarketsCore | `0x2802504314685D89bF6C992CA5a8e7cC78bc0294` |
-| BinarySettlement | `0xbF4a49e0Dfd092e5FBE8E5761064C49533e6Ed23` |
-| OutcomeToken6909 | `0xB52c5934113Af5c0Bb20eb3C72290C8215f755b9` |
-| OracleHub | `0xe40db387cC98601Dd11bd634fF2f3AD5686dE32b` |
-| CollateralRouter | `0xbC0C9834B15ACE38bB50dDaa7d7f7C7CC4DC183C` |
-| tUSDC (DO NOT USE) | `0x70a86D8842FB63C4Ad2b7cdddF530eBf1BB25d8E` |
+| GambitFactory | `0x9e66dD3D9C75825bbe2f2D5B494cE89E08828a06` |
+| Implementation | `0xEa6971C152341C0c92c292908b2215BE260114d5` |
+| Balance | 50 STT |
 
-### Verified Interfaces (on-chain tested)
-```solidity
-interface IBinaryMarket {
-    function isResolved() external view returns (bool);
-    function isVoided() external view returns (bool);
-    function payoutNumerators() external view returns (uint256[] memory);
-    function status() external view returns (uint8); // 0=Listed,1=Trading,2=Locked,4=Resolved,5=Voided
-}
-```
-
-**Resolution reading:** `payoutNumerators()` returns `[nonzero, 0]` if YES/Up won, `[0, nonzero]` if NO/Down won, `[0,0]` if unresolved. Tested on resolved market `0x89ed92fdb79e0f1ee6b753704b6fb5023ec8bb0e`.
-
-### Somnia Gas Quirks
-| Behavior | Value | Notes |
+### Stranded Factories (DO NOT USE)
+| Version | Address | Balance |
 |---|---|---|
-| `receive()` + storage write gas limit | **Must set ≥2,000,000** | Actual usage ~223k, but EIP-7702 intrinsic floor (~1.19M) requires headroom. `estimateGas()` under-predicts — do NOT rely on it. |
-| `writeContract` with `value` | **Reverts** | Can't send native value via `writeContract`. Use plain `sendTransaction({ to, value })` to trigger `receive()`, then call functions separately. |
-| Clone deploy gas | ~40k | EIP-1167 minimal proxy. |
-| Logic contract deploy gas | ~8M | One-time cost. |
+| v5 | `0x9E2DA7c59259552FB79f8c32539F517219834919` | 15 STT |
+| v4 | `0x9d10956Bb431Ad47dBf9Da207D81d4018814B464` | 50 STT |
 
-### Known Token Issues
-- **tUSDC (`0x70a86...`):** `approve()` always reverts (even reset-to-zero). `transferFrom()` always reverts. `transfer()` to arbitrary contracts reverts — only Pool/BinaryModule/BinarySettlement whitelisted. EOA→EOA works (62k gas).
-- **Conclusion: tUSDC is completely unusable for escrow. STT is the only viable stake currency.**
-
-### Player A Deposit Flow (Factory + recordDeposit)
-Player A's stake is sent when the duel is created. Factory `createDuel()` is `payable`. Since Somnia reverts `writeContract+value`, the factory uses a two-step approach:
-1. Factory calls `Wager(clone).initialize(playerA, stakeAmount, ...)` — sets all params
-2. Factory calls `Wager(clone).recordDeposit{value: msg.value}(playerA)` — writes `deposits[playerA]`
-3. `recordDeposit()` checks `msg.sender == factory` (trusted caller only)
-
-This avoids the `writeContract+value` revert because the factory is a contract making a regular `CALL` with value, not a wallet client using `writeContract`.
-
-### Overpayment Prevention
-**Decision:** `receive()` and `recordDeposit()` both revert if `deposits[msg.sender] + msg.value > stakeAmount`. No stuck STT, no excess reclaim logic, no attack surface.
-
-**Rationale:** Preventing overpayment is simpler and safer than allowing it and building reclaim mechanisms. A player who sends too much STT gets an immediate revert — they can correct the amount and retry. This eliminates the risk of permanently stuck funds.
-
-### Known Limitations
-- **Fee rounding dust:** `fee = (pot * feeBps) / 10000` truncates to integer. The winner gets `pot - fee`, so up to 9999 wei of dust stays in the contract permanently with no sweep function. Acceptable for hackathon; a production version would add a `sweepDust()` callable by feeRecipient after settlement.
-- **No cancel-after-join:** `cancel()` requires `state == CREATED`. Once B calls `join()`, state transitions to `LOCKED`, and `cancel()` reverts with `"wrong state"`. This is intentional — B's deposit is protected. Tested explicitly in `test_cancel_revertsIfJoined`.
-
-### Gas Limit Rules for Scripts/Tests
-- Any call that triggers `receive()` or writes to storage on first touch: **explicitly set gas ≥2,000,000**
-- Never rely on `estimateGas()` — confirmed unreliable on Somnia
-- `settle()` and `cancel()` use `.call{value}` which is fine at standard gas
-- `join()` (read-only mapping check + one storage write): 500k is sufficient
+### ParimutuelPoolFactory (NOT DEPLOYED)
+| Contract | Address |
+|---|---|
+| ParimutuelPoolFactory | `0x0000000000000000000000000000000000000000` (placeholder) |
+| ParimutuelPool (logic) | Not deployed |
 
 ---
 
-## Pre-build Research
+## Accounts
 
-### OpenZeppelin Clones.sol
-- **Version:** v5.5.0+ (included in v5.6.1)
-- **Pragma:** `^0.8.20` — compatible with Solidity 0.8.28
-- **Import:** `import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";`
-- **Pattern:** `address clone = Clones.clone(impl);` then `IWager(clone).initialize(...)` in same tx.
-- **Safety:** Call `_disableInitializers()` in implementation constructor to prevent logic contract initialization.
-- **No storage collision risk** — clones delegatecall to fixed implementation.
-- **Non-upgradeable** — acceptable for per-duel escrows.
-
-### DreamDEX Resolution
-- `payoutNumerators()` confirmed on-chain — returns `uint256[]`.
-- `isResolved()`, `isVoided()`, `status()` also confirmed.
-- Voided markets: both sides redeem at 0.5 on DreamDEX. For Gambit: `refund()` returns each player their own stake.
-- Markets have unique, stable addresses per resolution window.
-
-### Foundry Deploy Commands
-```bash
-forge create --rpc-url https://api.infra.testnet.somnia.network \
-  --private-key $PRIVATE_KEY \
-  src/Wager.sol:Wager
-
-forge script script/Deploy.s.sol \
-  --rpc-url https://api.infra.testnet.somnia.network \
-  --private-key $PRIVATE_KEY \
-  --broadcast -vvv
-```
+| Role | Address | Private Key |
+|---|---|---|
+| Player A / Owner | `0x0022EC010030158cC27B283BA640706eDBa6080f` | `0x76d73b841d6b086cf98dda0f97588ec9f463472b6f016eae73f51b966be7aed7` |
+| Player B / Deployer | `0x5E2D3BD4ad0aE1CDF49DdB0F0C9C6d55790199cE6` | `0xd9c246d4b642c0d95adf60a8a6e680352b996a9d139ca9d5d4fa1f545487095a` |
+| Fee Recipient | `0x25265b9dBEb6c653b0CA281110Bb0697a9685107` | — |
 
 ---
 
-## What's Done
+## Infrastructure
 
-- [x] Research phase (Due diligence report, spike tests)
-- [x] tUSDC blocker confirmed — STT chosen as stake currency
-- [x] DreamDEX resolution reading verified on-chain
-- [x] STT escrow end-to-end spike test passed (deploy → deposit → join → settle → payout)
-- [x] SPIKE-REPORT.md updated with all findings
-- [x] OpenZeppelin Clones.sol verified for Solidity 0.8.28
-- [x] DreamDEX interface signatures re-verified on-chain (`payoutNumerators` exists, `winningOutcome` does not)
-- [x] Somnia Shannon RPC/chain ID/Foundry commands confirmed
-- [x] Gambit/ folder structure created
-- [x] handoff.md created
-- [x] Wager.sol written (EIP-1167 logic contract, 11,209 bytes compiled)
-- [x] GambitFactory.sol written (clone factory, 15,074 bytes compiled)
-- [x] IBinaryMarket.sol interface written
-- [x] Foundry project config (foundry.toml, remappings.txt)
-- [x] OpenZeppelin contracts installed (npm)
-- [x] forge-std installed (lib/)
-- [x] Contracts compile clean (solc 0.8.28, no errors, no warnings)
-- [x] Overpayment prevention: receive() and recordDeposit() revert if deposit exceeds stakeAmount
-- [x] Factory deposit flow: recordDeposit() writes deposits[playerA] during createDuel()
-- [x] Owner = playerA (not factory) — cancel() works for the right actor
-- [x] Foundry test suite written (test/Wager.t.sol) — 22 test cases covering:
-  - Happy path (YES win, NO win)
-  - Void/refund path
-  - Cancel/timeout path
-  - Fee math (zero fee, high fee, rounding)
-  - Overpayment (single, multiple deposits, exact amount)
-  - Edge cases (already joined, self-duel, deadline, insufficient deposit, not resolved, fee cap, getPot)
+| Resource | Details |
+|---|---|
+| Frontend | Next.js 14.1 + React 18, deployed on **Vercel** |
+| GitHub | `https://github.com/Abd00lmalik/Gambit` (branch: `main`) |
+| Vercel Install | `npm install && cd frontend && npm install` |
+| Vercel Build | `cd frontend && npx next build` |
+| Vercel Output | `frontend/.next` |
+| RPC | `https://api.infra.testnet.somnia.network` |
+| Chain ID | `50312` |
+| Explorer | `https://shannon-explorer.somnia.network` |
+| Faucet | `https://testnet.somnia.network/` |
+| DreamDEX GraphQL | `https://dev.smk.somnia.host/v1/graphql` |
+| DreamDEX REST API | `https://stg.api.dreamdex.io/v0` (testnet, `/v0` prefix required) |
+| DreamDEX WebSocket | `wss://stg.api.dreamdex.io/v0/ws/public` |
+| DreamDEX SDK | `@somnia-chain/markets-sdk@0.29.0` |
+| DreamDEX SDK Contract | `BinaryMarketsModule` at `0x3ecC694Cef705358864a646142ac17A90E29e388` |
+| Oracle Explorer | `https://prd.oracle.somnia.host/questions/{oracleQuestionId}?view=graph` |
+| Supabase | Connected (PostgreSQL for profiles/pfps) |
+| Vercel Blob | Connected (private store, for PFP uploads) |
 
 ---
 
-## In Progress
+## Key Quirks & Gotchas
 
-- [ ] Install Foundry via WSL/Git Bash
-- [ ] Run `forge test` locally — ALL tests must pass before testnet
-- [ ] Testnet deployment script (`Gambit/script/Deploy.s.sol`)
-- [ ] Testnet integration test — same scenarios as local tests, with real transactions
+### Somnia-Specific
+| Issue | Details |
+|---|---|
+| `writeContract` with value reverts | Use plain `sendTransaction({ to, value })` to trigger `receive()` |
+| `cast call` with `()(rettype)` syntax fails inline | Must use script files |
+| Plain ETH transfers to contracts | Require `--gas-limit 2000000` |
+| Factory deploy | Requires `--gas-limit 100000000` |
+| EIP-1167 clone calls | Use `--gas-limit 5000000` minimum |
+| Reactivity precompile | `0x0100`, min balance 32 native, `SUBSCRIPTION_FUND = 35 ether` |
+
+### DreamDEX-Specific
+| Issue | Details |
+|---|---|
+| **Does NOT support SOL or SOMI** | Only BTC and ETH markets exist |
+| **Supports 5m markets** | App uses 5m/15m/1h intervals |
+| **`expiry: {_gt: now}` filter broken** | Returns empty results. Must sort by `expiry: desc` and filter client-side |
+| **`strike` = opening price** | Label renamed to "Opening Price" across codebase |
+| **`isGuaranteed: true` required** | Despite docs saying "Reserved. Pass false" |
+| **`Asset`/`Interval` types are `string`** | Not literal unions — dynamic market discovery |
+
+### Next.js / Frontend
+| Issue | Details |
+|---|---|
+| **Next.js 14.1 + React 18** | `use()` hook NOT available (React 19 only). Params are plain objects. |
+| **`setInterval` global clash** | State renamed to `selectedInterval` in create/page.tsx |
+| **`@vercel/postgres` SSR crash** | `db.ts` uses `require()` with try/catch to avoid SSR failures |
+| **Vercel Blob is PRIVATE** | PFP upload uses `access: "private"`, stored signed URL in DB |
+| **Room code system** | 6-char code derived from pool address (`poolAddress.slice(2,8)`) |
+| **Repo structure** | `frontend/` directory at root. Vercel: install/build in nested dir |
 
 ---
 
-## Next (after contracts)
+## Test Status
 
-1. **Install Foundry via WSL/Git Bash** — run `curl -L https://foundry.paradigm.xyz | bash && foundryup` in WSL Ubuntu
-2. **Run `forge test` locally** — ALL 22 tests must pass before any testnet deployment
-3. **Testnet deployment script** (`Gambit/script/Deploy.s.sol`) — deploy factory to Somnia Shannon
-4. **Testnet integration test** — same scenarios as local tests, but with real transactions on testnet
-5. Frontend (Vercel, Next.js or similar)
-6. Backend (Vercel, API routes for duel creation/matching)
-7. Demo video (2-3 min)
+**53 Forge tests passing** (36 Wager + 17 ParimutuelPool)
+
+### Wager Tests (36)
+- Happy path (YES win, NO win)
+- Void/refund path
+- Cancel/timeout path
+- Fee math (zero fee, high fee, rounding)
+- Overpayment prevention
+- Edge cases (already joined, self-duel, deadline, insufficient deposit, not resolved, fee cap, getPot)
+- Admin withdraw() — owner-gated, 6 tests
+- Subscription reclaim logic — `_reclaimSubscriptionFund()` in settle/refund/cancel paths
+- Void-aware auto-refund — `_onEvent()` checks `isVoided()`, refunds both stakes
+
+### ParimutuelPool Tests (17)
+- Pool creation, depositUp, depositDown
+- Resolve, claim, refund
+- Deadline and join limits
 
 ---
 
-## Known Blockers / Open Questions
+## Frontend Architecture
 
-- **None currently.** Full E2E flow works on Somnia testnet. Next: frontend, backend, demo video.
+### Pages
+| Route | Description |
+|---|---|
+| `/` | Landing page |
+| `/arena` | Duel lobby — shows active on-chain duels, 1v1 vs Squad creation selector |
+| `/create` | Duel creation — 1v1 or Squad Pool mode, BTC/ETH, 5m/15m/1h, real order book sentiment |
+| `/pool` | Squad Pool creation — hardcoded BTC/ETH, 5m/15m/1h intervals |
+| `/pool/[address]` | Squad Pool detail — invite banner, room code, participant identities, pool split bar, squad tally |
+| `/duel/[id]` | Live duel view — countdown, settlement, real-time price chart |
+| `/u/[address]` | Profile page — PFP upload, username, bio, duel history |
+| `/portfolio` | User's duel portfolio |
+| `/stats` | Global stats |
+
+### Key Components
+| Component | File | Description |
+|---|---|---|
+| `MarketSentimentBar` | `components/MarketSentimentBar.tsx` | DreamDEX order book sentiment with 15s refresh |
+| `OracleVerification` | `components/OracleVerification.tsx` | Deep-link to DreamDEX oracle explorer |
+| `SettlementLatency` | `components/SettlementLatency.tsx` | Color-coded auto-settlement latency display |
+| `LiveChart` | `components/LiveChart.tsx` | TradingView chart |
+| `CountdownTimer` | `components/CountdownTimer.tsx` | Countdown to market expiry |
+| `AssetIcon` | `components/AssetIcon.tsx` | Real Bitcoin/Ethereum SVGs + generic fallback |
+| `CustomConnectButton` | `components/CustomConnectButton.tsx` | Wagmi-based wallet connection (injected connector) |
+| `PfpUpload` | `components/PfpUpload.tsx` | PFP upload component |
+
+### Key Hooks
+| Hook | File | Description |
+|---|---|---|
+| `useLivePrices` | `hooks/useLivePrices.ts` | Live ticker price from DreamDEX GraphQL |
+| `useMarketSentiment` | `hooks/useMarketSentiment.ts` | Real order book sentiment (UP/DOWN %) |
+| `useDuelEvents` | `hooks/useDuelEvents.ts` | Duel event polling with `isInitialLoad` ref (prevents flickering) |
+| `useContracts` | `hooks/useContracts.ts` | Contract read/write hooks |
+| `useIntervalTimer` | `hooks/useMarkets.ts` | Countdown timer for market intervals |
+| `useSupabaseProfile` | `hooks/useSupabaseProfile.ts` | Profile fetch via `/api/profile` |
+
+### Key Libs
+| Lib | File | Description |
+|---|---|---|
+| `dreamdex.ts` | `lib/dreamdex.ts` | GraphQL queries, `fetchMarketsByInterval`, `fetchLatestIndexPrices`, `verifyMarketAddress`, `fetchOpeningPrices` |
+| `orderbook.ts` | `lib/orderbook.ts` | `fetchMarketSentiment` with real order book data |
+| `db.ts` | `lib/db.ts` | Resilient `@vercel/postgres` with try/catch wrappers |
+| `contracts.ts` | `lib/contracts.ts` | v6 addresses + ABIs + POOL_FACTORY_ADDRESS placeholder |
+| `config.ts` | `lib/config.ts` | Chain config, wagmi config (injected connector only) |
+| `constants.ts` | `lib/constants.ts` | Colors, ASSET_INFO (BTC/ETH only), INTERVAL_OPTIONS (5m/15m/1h) |
+| `types.ts` | `lib/types.ts` | `Asset = string`, `Interval = string` |
+
+### API Routes
+| Route | Method | Description |
+|---|---|---|
+| `/api/pfp` | POST | PFP upload (Vercel Blob private store, signed URL stored) |
+| `/api/profile` | GET/POST | Profile CRUD |
 
 ---
 
-## CRITICAL: Somnia-Specific Deployment & Gas Quirks
+## Completed Features
 
-### Contract Creation Bug
-- `cast send --create` and ethers.js `sendTransaction({data})` **silently drop the `data` field** on Somnia
-- **Fix**: Use `forge create --broadcast` for all contract deployment
-- Standalone Wager deployed at `0xc3A8865383Bd0Dcc15443522EEE247945E5e40e9` (via `forge create`)
-- Factory deployed at `0x3E106bA72C3AdB511076Cf849c4A70bb132Be395` (via `forge create --constructor-args`)
+### Contracts
+- [x] Wager.sol — Reactive settlement, void-aware auto-refund, subscription fund reclaim
+- [x] GambitFactory.sol v6 — Create/join/settle/cancel duels, withdraw, subscription fund management
+- [x] ParimutuelPool.sol — EIP-1167 clone, depositUp/Down, resolve, claim
+- [x] ParimutuelPoolFactory.sol — Deploys pool clones
+- [x] 53 Forge tests passing (36 + 17)
+- [x] Full E2E test on v6 PASSED — Two duels settled reactively with 2s latency each
+- [x] Recycling model confirmed — Factory starts/ends at 50 STT after each duel cycle
 
-### Gas Model Bug (CRITICAL)
-- Somnia's custom EVM compiler charges **~1,000,000 extra gas** for DELEGATECALL to accounts not in the "hot set" (32M accounts)
-- **Symptom**: `join()` and other function calls on EIP-1167 clones revert with `OUT_OF_GAS` when gas limit is < ~1M
-- **`eth_call` (callStatic/cast call) succeeds** but **`eth_sendTransaction` (cast send) reverts** — Somnia simulates differently
-- **Fix**: Use `--gas-limit 5000000` for ALL transactions that call functions on EIP-1167 clones
-- Value transfers via `receive()` (no calldata) work with lower gas limits (~2.5M)
+### Frontend
+- [x] Wallet connection (MetaMask/injected)
+- [x] DreamDEX live market discovery (5m/15m/1h, BTC/ETH)
+- [x] Real order book sentiment (UP/DOWN %) on create page
+- [x] TradingView chart integration
+- [x] Auto-settlement latency display (color-coded)
+- [x] Oracle transparency (deep-link to oracle explorer)
+- [x] Market verification (off-chain indexer + on-chain staticcall)
+- [x] Void-aware auto-refund in contract (reads `isVoided()`)
+- [x] 1v1 vs Squad creation mode selector
+- [x] Arena page with real on-chain duels (no mock data)
+- [x] Invite link generation on duel creation success
+- [x] Squad Pool creation (BTC/ETH, 5m/15m/1h)
+- [x] Squad Pool detail page (invite banner, room code, participants, pool split, squad tally)
+- [x] Room code system (6-char code from pool address)
+- [x] Profile page with PFP upload
+- [x] CoinGecko fallback for live BTC/ETH prices
+- [x] Fixed Arena page flickering (isInitialLoad ref)
+- [x] Fixed profile page React 19 crash (plain object params for Next.js 14)
+- [x] Fixed DreamDEX GraphQL expiry filter (removed `_gt`, client-side filter)
+- [x] Fixed PFP upload for private Vercel Blob store
 
-### Working Deployment
-```
-Factory: 0x3E106bA72C3AdB511076Cf849c4A70bb132Be395 (4-arg constructor)
-  └─ implementation: 0x5090dD57479030a7d7F5EB4d4d11Ba31ba9bA885
-Standalone Wager: 0xc3A8865383Bd0Dcc15443522EEE247945E5e40e9
-```
+---
 
-### Working E2E Script
-`Gambit/script/full-e2e.sh` — runs: createDuel → B deposit → B join → settle (all succeed with gas-limit 5000000)
+## Known Issues / Not Working
+
+1. **ParimutuelPoolFactory not deployed** — Placeholder address `0x0000...` in contracts.ts
+2. **PFP signed URL expires** — Vercel Blob private store returns signed URLs that expire. Need to re-upload periodically or switch to public store.
+3. **Previous GitHub repo content lost** — Force-pushed over original repo; old commits unrecoverable from remote
+
+---
+
+## Roadmap / Next Steps
+
+1. **Deploy ParimutuelPoolFactory** — Needs STT for gas, deploy logic contract, then factory
+2. **Replace expired PFP URLs** — Consider using a database-stored blob path with API route serving, or configure Vercel Blob store as public
+3. **Polish UX** — Loading states, error handling, responsive design
+4. **Demo video** — 2-3 minute walkthrough of full flow
+5. **Mainnet considerations** — Fee tuning, min/max stake adjustments, rate limiting
 
 ---
 
 ## Key File Locations
 
-| File | Path | Status |
-|---|---|---|
-| handoff.md | `Gambit/handoff.md` | Current |
-| Wager.sol | `Gambit/contracts/Wager.sol` | Complete, compiles, OZ Initializable removed |
-| GambitFactory.sol | `Gambit/contracts/GambitFactory.sol` | Complete, compiles, 4-arg constructor |
-| MinimalWager.sol | `Gambit/contracts/MinimalWager.sol` | Test contract for deployment boundary |
-| IBinaryMarket.sol | `Gambit/contracts/interfaces/IBinaryMarket.sol` | Complete |
-| Wager.t.sol | `Gambit/test/Wager.t.sol` | Complete (24 tests), ALL PASSING |
-| foundry.toml | `Gambit/foundry.toml` | evm_version = "paris", solc 0.8.28 |
-| remappings.txt | `Gambit/remappings.txt` | Complete |
-| full-e2e.sh | `Gambit/script/full-e2e.sh` | Working E2E script for Somnia testnet |
-| run-scenario.sh | `Gambit/script/run-scenario.sh` | Scenario script (uses high gas limit) |
-| OpenZeppelin | `Gambit/node_modules/@openzeppelin/contracts/` | Installed (npm) |
-| forge-std | `Gambit/lib/forge-std/` | Installed (GitHub zip) |
-| Compiled output | `Gambit/out/` | Wager: 11,209 bytes, Factory: 15,074 bytes |
-| SPIKE-REPORT.md | `SPIKE-REPORT.md` | Current |
-| RESEARCH-REPORT.md | `RESEARCH-REPORT.md` | Current |
+| File | Path |
+|---|---|
+| handoff.md | `Gambit/handoff.md` |
+| Wager.sol | `contracts/Wager.sol` |
+| GambitFactory.sol | `contracts/GambitFactory.sol` |
+| ParimutuelPool.sol | `contracts/ParimutuelPool.sol` |
+| ParimutuelPoolFactory.sol | `contracts/ParimutuelPoolFactory.sol` |
+| Wager.t.sol | `test/Wager.t.sol` |
+| ParimutuelPool.t.sol | `test/ParimutuelPool.t.sol` |
+| foundry.toml | `foundry.toml` |
+| Frontend root | `frontend/` |
+| DreamDEX integration | `frontend/lib/dreamdex.ts` |
+| Order book sentiment | `frontend/lib/orderbook.ts` |
+| Contract addresses | `frontend/lib/contracts.ts` |
+| Create page | `frontend/app/create/page.tsx` |
+| Arena page | `frontend/app/arena/page.tsx` |
+| Profile page | `frontend/app/u/[address]/page.tsx` |
