@@ -225,9 +225,12 @@ export async function fetchMarketsByInterval(
   intervalSec: number,
   limit = 5
 ): Promise<DreamDexMarket[]> {
-  // Try clobStatus filter first, fall back to no filter if empty
+  const now = Math.floor(Date.now() / 1000);
+  // Fetch more than needed since many may be expired
+  const fetchLimit = Math.max(limit * 5, 20);
+
+  // Query: only future (non-expired) markets, sorted by expiry ascending (nearest first)
   const queries = [
-    // Primary: strict filter
     `{
       Market(
         where: {
@@ -236,10 +239,11 @@ export async function fetchMarketsByInterval(
           voided: {_eq: false},
           asset: {_eq: "${asset}"},
           intervalSec: {_eq: ${intervalSec}},
+          expiry: {_gt: ${now}},
           clobStatus: {_eq: "Trading"}
         }
-        order_by: {createdAtTimestamp: desc}
-        limit: ${limit}
+        order_by: {expiry: asc}
+        limit: ${fetchLimit}
       ) {
         id marketAddress marketId asset question strike indexPrice
         intervalSec expiry clobStatus binaryPoolAddress venueId
@@ -254,10 +258,11 @@ export async function fetchMarketsByInterval(
           finalized: {_eq: false},
           voided: {_eq: false},
           asset: {_eq: "${asset}"},
-          intervalSec: {_eq: ${intervalSec}}
+          intervalSec: {_eq: ${intervalSec}},
+          expiry: {_gt: ${now}}
         }
-        order_by: {createdAtTimestamp: desc}
-        limit: ${limit}
+        order_by: {expiry: asc}
+        limit: ${fetchLimit}
       ) {
         id marketAddress marketId asset question strike indexPrice
         intervalSec expiry clobStatus binaryPoolAddress venueId
@@ -315,7 +320,8 @@ export async function fetchMarketsByInterval(
     m.openingPrice = openingPrices[m.id.toLowerCase()] ?? null;
   }
 
-  return mapped;
+  // Return only `limit` results
+  return mapped.slice(0, limit);
 }
 
 export async function fetchLatestIndexPrices(): Promise<

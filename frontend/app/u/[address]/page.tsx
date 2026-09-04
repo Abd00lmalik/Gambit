@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useMemo } from "react";
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useAccount } from "wagmi";
@@ -18,9 +18,9 @@ function formatAddress(addr: string): string {
 export default function ProfilePage({
   params,
 }: {
-  params: Promise<{ address: string }>;
+  params: { address: string };
 }) {
-  const { address } = use(params);
+  const { address } = params;
   const addressLower = address.toLowerCase();
   const { address: connectedAddress } = useAccount();
   const { duels, isLoading: chainLoading } = useDuelCreatedEvents();
