@@ -327,21 +327,24 @@ export async function fetchMarketsByInterval(
 export async function fetchLatestIndexPrices(): Promise<
   Record<string, number>
 > {
+  const now = Math.floor(Date.now() / 1000);
   const query = `{
     Market(
       where: {
         marketType: {_eq: "BINARY"},
         finalized: {_eq: false},
         voided: {_eq: false},
-        strike: {_gt: "0"}
+        expiry: {_gt: ${now}},
+        clobStatus: {_eq: "Trading"}
       }
-      order_by: {createdAtTimestamp: desc}
-      limit: 50
+      order_by: {expiry: asc}
+      limit: 20
     ) {
       asset
       strike
       indexPrice
       intervalSec
+      expiry
     }
   }`;
 
@@ -358,17 +361,18 @@ export async function fetchLatestIndexPrices(): Promise<
 
     for (const m of markets) {
       const asset = m.asset;
+      if (asset !== "BTC" && asset !== "ETH") continue;
       const indexPrice = Number(m.indexPrice);
       const strike = Number(m.strike);
-      if (strike <= 0) continue;
+      if (strike <= 0 && indexPrice <= 0) continue;
 
       const price = indexPrice > 0 ? indexPrice : (strike > 10000 ? strike / 100 : strike / 1000);
       const interval = Number(m.intervalSec);
 
       let priority = 0;
-      if (interval === 900) priority = 3;
-      else if (interval === 3600) priority = 2;
-      else if (interval === 300) priority = 1;
+      if (interval === 300) priority = 3;
+      else if (interval === 900) priority = 2;
+      else if (interval === 3600) priority = 1;
 
       if (!bestPrices[asset] || priority > bestPrices[asset].priority) {
         bestPrices[asset] = { price, priority };
@@ -379,6 +383,20 @@ export async function fetchLatestIndexPrices(): Promise<
     for (const [asset, data] of Object.entries(bestPrices)) {
       result[asset] = data.price;
     }
+
+    // If DreamDEX didn't give us prices for BTC/ETH, try CoinGecko fallback
+    if (!result.BTC || !result.ETH) {
+      try {
+        const geckoRes = await fetch(
+          "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd",
+          { next: { revalidate: 30 } }
+        );
+        const geckoData = await geckoRes.json();
+        if (!result.BTC && geckoData.bitcoin?.usd) result.BTC = geckoData.bitcoin.usd;
+        if (!result.ETH && geckoData.ethereum?.usd) result.ETH = geckoData.ethereum.usd;
+      } catch {}
+    }
+
     return result;
   } catch (e) {
     console.error("Failed to fetch index prices:", e);
