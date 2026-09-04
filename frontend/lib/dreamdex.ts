@@ -150,13 +150,36 @@ export interface DreamDexMarket {
   oracleQuestionId: string;
 }
 
+/**
+ * Parse the strike/opening price from a DreamDEX question string.
+ * Question format: "Pricefeed test: will ETH/USDC's price be at or above 2447.32 at unix time ..."
+ * Returns the numeric price or null if not parseable.
+ */
+function parseStrikeFromQuestion(question: string): number | null {
+  if (!question) return null;
+  // Match "at or above <number>" pattern
+  const match = question.match(/at or above\s+([\d,]+\.?\d*)/i);
+  if (match) {
+    const val = parseFloat(match[1].replace(/,/g, ""));
+    if (!isNaN(val) && val > 0) return val;
+  }
+  // Fallback: match any dollar-style number after "above"
+  const match2 = question.match(/above\s+\$?([\d,]+\.?\d*)/i);
+  if (match2) {
+    const val = parseFloat(match2[1].replace(/,/g, ""));
+    if (!isNaN(val) && val > 0) return val;
+  }
+  return null;
+}
+
 export async function fetchActiveBinaryMarkets(
   limit = 30
 ): Promise<DreamDexMarket[]> {
+  const now = Math.floor(Date.now() / 1000);
   const query = `{
     Market(
-      where: {marketType: {_eq: "BINARY"}, finalized: {_eq: false}, voided: {_eq: false}}
-      order_by: {createdAtTimestamp: desc}
+      where: {marketType: {_eq: "BINARY"}, finalized: {_eq: false}, voided: {_eq: false}, expiry: {_gt: ${now}}}
+      order_by: {expiry: asc}
       limit: ${limit}
     ) {
       id
@@ -188,30 +211,34 @@ export async function fetchActiveBinaryMarkets(
 
     const mapped = markets
       .filter((m: any) => m.marketAddress && m.clobStatus === "Trading")
-      .map((m: any) => ({
-        id: m.id,
-        marketAddress: m.marketAddress as Address,
-        marketId: m.marketId,
-        asset: m.asset,
-        question: m.question,
-        strike: Number(m.strike),
-        indexPrice: Number(m.indexPrice) || 0,
-        openingPrice: null as number | null,
-        intervalSec: Number(m.intervalSec),
-        expiry: Number(m.expiry),
-        clobStatus: m.clobStatus,
-        binaryPoolAddress: m.binaryPoolAddress,
-        venueId: m.venueId,
-        finalized: m.finalized,
-        voided: m.voided,
-        oracleQuestionId: m.oracleQuestionId || "",
-      }));
-
-    // Batch-fetch opening prices for all markets
-    const openingPrices = await fetchOpeningPrices(mapped.map((m: any) => m.id));
-    for (const m of mapped) {
-      m.openingPrice = openingPrices[m.id.toLowerCase()] ?? null;
-    }
+      .map((m: any) => {
+        const strikeVal = Number(m.strike);
+        const questionPrice = parseStrikeFromQuestion(m.question);
+        let openingPrice: number | null = null;
+        if (strikeVal > 0) {
+          openingPrice = strikeVal > 100000 ? strikeVal / 100 : strikeVal;
+        } else if (questionPrice !== null) {
+          openingPrice = questionPrice;
+        }
+        return {
+          id: m.id,
+          marketAddress: m.marketAddress as Address,
+          marketId: m.marketId,
+          asset: m.asset,
+          question: m.question,
+          strike: strikeVal,
+          indexPrice: Number(m.indexPrice) || 0,
+          openingPrice,
+          intervalSec: Number(m.intervalSec),
+          expiry: Number(m.expiry),
+          clobStatus: m.clobStatus,
+          binaryPoolAddress: m.binaryPoolAddress,
+          venueId: m.venueId,
+          finalized: m.finalized,
+          voided: m.voided,
+          oracleQuestionId: m.oracleQuestionId || "",
+        };
+      });
 
     return mapped;
   } catch (e) {
@@ -226,7 +253,7 @@ export async function fetchMarketsByInterval(
   limit = 5
 ): Promise<DreamDexMarket[]> {
   const now = Math.floor(Date.now() / 1000);
-  // Fetch only 15 non-expired markets (nearest expiry first). No batch opening price call.
+  // Server-side filter: only non-expired markets, nearest expiry first
   const query = `{
     Market(
       where: {
@@ -234,10 +261,11 @@ export async function fetchMarketsByInterval(
         finalized: {_eq: false},
         voided: {_eq: false},
         asset: {_eq: "${asset}"},
-        intervalSec: {_eq: ${intervalSec}}
+        intervalSec: {_eq: ${intervalSec}},
+        expiry: {_gt: ${now}}
       }
-      order_by: {expiry: desc}
-      limit: 15
+      order_by: {expiry: asc}
+      limit: ${limit}
     ) {
       id marketAddress marketId asset question strike indexPrice
       intervalSec expiry clobStatus binaryPoolAddress venueId
@@ -260,40 +288,39 @@ export async function fetchMarketsByInterval(
     return [];
   }
 
-  // Filter: has address, not expired yet
-  const active = markets
-    .filter((m: any) => m.marketAddress && Number(m.expiry) > now)
-    .sort((a: any, b: any) => Number(a.expiry) - Number(b.expiry)); // nearest expiry first
+  // GraphQL already filters non-expired; just ensure has address
+  const active = markets.filter((m: any) => m.marketAddress);
 
   const mapped = active
     .slice(0, limit)
-    .map((m: any) => ({
-      id: m.id,
-      marketAddress: m.marketAddress as Address,
-      marketId: m.marketId,
-      asset: m.asset,
-      question: m.question,
-      strike: Number(m.strike),
-      indexPrice: Number(m.indexPrice) || 0,
-      openingPrice: null as number | null,
-      intervalSec: Number(m.intervalSec),
-      expiry: Number(m.expiry),
-      clobStatus: m.clobStatus,
-      binaryPoolAddress: m.binaryPoolAddress,
-      venueId: m.venueId,
-      finalized: m.finalized,
-      voided: m.voided,
-      oracleQuestionId: m.oracleQuestionId || "",
-    }));
-
-  if (mapped.length === 0) return [];
-
-  // DreamDEX strike IS the opening price — use it directly, no extra query
-  for (const m of mapped) {
-    if (m.strike > 0) {
-      m.openingPrice = m.strike > 100000 ? m.strike / 100 : m.strike;
-    }
-  }
+    .map((m: any) => {
+      const strikeVal = Number(m.strike);
+      const questionPrice = parseStrikeFromQuestion(m.question);
+      let openingPrice: number | null = null;
+      if (strikeVal > 0) {
+        openingPrice = strikeVal > 100000 ? strikeVal / 100 : strikeVal;
+      } else if (questionPrice !== null) {
+        openingPrice = questionPrice;
+      }
+      return {
+        id: m.id,
+        marketAddress: m.marketAddress as Address,
+        marketId: m.marketId,
+        asset: m.asset,
+        question: m.question,
+        strike: strikeVal,
+        indexPrice: Number(m.indexPrice) || 0,
+        openingPrice,
+        intervalSec: Number(m.intervalSec),
+        expiry: Number(m.expiry),
+        clobStatus: m.clobStatus,
+        binaryPoolAddress: m.binaryPoolAddress,
+        venueId: m.venueId,
+        finalized: m.finalized,
+        voided: m.voided,
+        oracleQuestionId: m.oracleQuestionId || "",
+      };
+    });
 
   return mapped;
 }
@@ -302,22 +329,23 @@ export async function fetchLatestIndexPrices(): Promise<
   Record<string, number>
 > {
   const now = Math.floor(Date.now() / 1000);
-  // Only fetch 5m markets (fastest refresh, most current price). Limit 10.
+  // Fetch active markets across all intervals to maximize price coverage
   const query = `{
     Market(
       where: {
         marketType: {_eq: "BINARY"},
         finalized: {_eq: false},
         voided: {_eq: false},
-        intervalSec: {_eq: 300}
+        expiry: {_gt: ${now}}
       }
-      order_by: {expiry: desc}
-      limit: 10
+      order_by: {expiry: asc}
+      limit: 20
     ) {
       asset
       strike
       indexPrice
       expiry
+      question
     }
   }`;
 
@@ -335,14 +363,22 @@ export async function fetchLatestIndexPrices(): Promise<
     for (const m of markets) {
       const asset = m.asset;
       if (asset !== "BTC" && asset !== "ETH") continue;
-      if (Number(m.expiry) <= now) continue;
+
       const indexPrice = Number(m.indexPrice);
       const strike = Number(m.strike);
-      if (strike <= 0 && indexPrice <= 0) continue;
+      const questionPrice = parseStrikeFromQuestion(m.question);
 
-      const price = indexPrice > 0 ? indexPrice : (strike > 100000 ? strike / 100 : strike);
+      let price = 0;
+      if (indexPrice > 0) {
+        price = indexPrice;
+      } else if (strike > 0) {
+        price = strike > 100000 ? strike / 100 : strike;
+      } else if (questionPrice !== null) {
+        price = questionPrice;
+      }
+      if (price <= 0) continue;
+
       const expiry = Number(m.expiry);
-
       if (!bestPrices[asset] || expiry > bestPrices[asset].expiry) {
         bestPrices[asset] = { price, expiry };
       }
@@ -357,8 +393,7 @@ export async function fetchLatestIndexPrices(): Promise<
     if (!result.BTC || !result.ETH) {
       try {
         const geckoRes = await fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd",
-          { next: { revalidate: 30 } }
+          "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd"
         );
         const geckoData = await geckoRes.json();
         if (!result.BTC && geckoData.bitcoin?.usd) result.BTC = geckoData.bitcoin.usd;
@@ -477,7 +512,9 @@ export function getTimeRemainingForInterval(
   const now = Math.floor(Date.now() / 1000);
   const boundary = Math.ceil(now / intervalSec) * intervalSec;
   return { secondsLeft: boundary - now, nextBoundary: boundary };
-}export interface MarketCombo {
+}
+
+export interface MarketCombo {
   asset: string;
   intervalSec: number;
   label: string;

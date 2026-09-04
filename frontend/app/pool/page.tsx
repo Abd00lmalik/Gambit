@@ -24,7 +24,7 @@ export default function SquadPoolPage() {
   const [selectedAsset, setSelectedAsset] = useState<"BTC" | "ETH">("BTC");
   const [selectedInterval, setSelectedInterval] = useState<string>("15m");
   const [selectedMarket, setSelectedMarket] = useState<DreamDexMarket | null>(null);
-  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketLoading, setMarketLoading] = useState(true);
   const [squadName, setSquadName] = useState("");
   const [depositAmount, setDepositAmount] = useState("0.5");
   const [selectedSide, setSelectedSide] = useState<"UP" | "DOWN">("UP");

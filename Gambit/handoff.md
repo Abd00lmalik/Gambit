@@ -90,7 +90,7 @@ Gambit reads DreamDEX Event Contracts as an oracle and leverages **Somnia reacti
 |---|---|
 | **Does NOT support SOL or SOMI** | Only BTC and ETH markets exist |
 | **Supports 5m markets** | App uses 5m/15m/1h intervals |
-| **`expiry: {_gt: now}` filter broken** | Returns empty results. Must sort by `expiry: desc` and filter client-side |
+| **`expiry: {_gt: now}` filter** | Works — use server-side GraphQL filtering, no client-side expiry filter needed |
 | **`strike` = opening price** | Label renamed to "Opening Price" across codebase |
 | **`isGuaranteed: true` required** | Despite docs saying "Reserved. Pass false" |
 | **`Asset`/`Interval` types are `string`** | Not literal unions — dynamic market discovery |
@@ -215,7 +215,11 @@ Gambit reads DreamDEX Event Contracts as an oracle and leverages **Somnia reacti
 - [x] CoinGecko fallback for live BTC/ETH prices
 - [x] Fixed Arena page flickering (isInitialLoad ref)
 - [x] Fixed profile page React 19 crash (plain object params for Next.js 14)
-- [x] Fixed DreamDEX GraphQL expiry filter (removed `_gt`, client-side filter)
+- [x] Fixed DreamDEX GraphQL expiry filter (now uses server-side `_gt: now` filter)
+- [x] Fixed sort bug in fetchMarketsByInterval (was `a.expiry - a.expiry`)
+- [x] Fixed opening price derivation — parses strike from question text when `strike=0`
+- [x] Fixed CoinGecko fallback (removed server-only `next: { revalidate: 30 }`)
+- [x] Fixed marketLoading init flash in create/pool pages
 - [x] Fixed PFP upload for private Vercel Blob store
 
 ---

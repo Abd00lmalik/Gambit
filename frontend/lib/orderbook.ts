@@ -5,7 +5,7 @@ const GRAPHQL_URL = "https://dev.smk.somnia.host/v1/graphql";
 export interface OrderBookLevel {
   price: number;
   size: number;
-  side: "BUY" | "SELL";
+  side: "BUY_YES" | "SELL_YES";
 }
 
 export interface MarketSentiment {
@@ -26,7 +26,7 @@ export async function fetchOrderBook(
       limit: ${depth * 2},
       order_by: {price: asc},
       where: {
-        status: {_eq: "OPEN"},
+        status: {_eq: "Open"},
         market: {marketAddress: {_eq: "${marketAddress}"}}
       }
     ) {
@@ -48,7 +48,7 @@ export async function fetchOrderBook(
     return orders.map((o: any) => ({
       price: parseFloat(o.price),
       size: parseFloat(o.quantityRemaining),
-      side: o.side as "BUY" | "SELL",
+      side: o.side as "BUY_YES" | "SELL_YES",
     }));
   } catch (e) {
     console.error("Failed to fetch order book:", e);
@@ -57,24 +57,26 @@ export async function fetchOrderBook(
 }
 
 export function calculateSentiment(orders: OrderBookLevel[]): MarketSentiment {
-  const bids = orders.filter((o) => o.side === "BUY");
-  const asks = orders.filter((o) => o.side === "SELL");
+  // BUY_YES = people buying YES tokens (betting UP) = UP side
+  // SELL_YES = people selling YES tokens (betting DOWN) = DOWN side
+  const bids = orders.filter((o) => o.side === "BUY_YES");
+  const asks = orders.filter((o) => o.side === "SELL_YES");
 
-  const totalBidDepth = bids.reduce((sum, o) => sum + o.size * o.price, 0);
-  const totalAskDepth = asks.reduce((sum, o) => sum + o.size * o.price, 0);
+  const totalBidDepth = bids.reduce((sum, o) => sum + o.size, 0);
+  const totalAskDepth = asks.reduce((sum, o) => sum + o.size, 0);
   const totalDepth = totalBidDepth + totalAskDepth;
 
-  const upPercent = totalDepth > 0 ? (totalBidDepth / totalDepth) * 100 : 50;
-  const downPercent = totalDepth > 0 ? (totalAskDepth / totalDepth) * 100 : 50;
+  const upPercent = totalDepth > 0 ? Math.round((totalBidDepth / totalDepth) * 100) : 50;
+  const downPercent = totalDepth > 0 ? Math.round((totalAskDepth / totalDepth) * 100) : 50;
 
   const bestBid = bids.length > 0 ? Math.max(...bids.map((o) => o.price)) : 0;
-  const bestAsk = asks.length > 0 ? Math.min(...asks.map((o) => o.price)) : 1;
+  const bestAsk = asks.length > 0 ? Math.min(...asks.map((o) => o.price)) : 0;
   const midPrice = (bestBid + bestAsk) / 2;
   const spread = bestAsk - bestBid;
 
   return {
-    upPercent: Math.round(upPercent),
-    downPercent: Math.round(downPercent),
+    upPercent,
+    downPercent,
     totalBidDepth,
     totalAskDepth,
     midPrice,

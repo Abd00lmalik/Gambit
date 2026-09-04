@@ -42,7 +42,7 @@ export default function CreateDuelPage() {
   const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedMarket, setSelectedMarket] = useState<DreamDexMarket | null>(null);
-  const [marketLoading, setMarketLoading] = useState(false);
+  const [marketLoading, setMarketLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
 
   const { createDuel, isPending } = useDuelFactory();
