@@ -25,10 +25,13 @@ export async function fetchOrderBook(
     Order(
       limit: ${depth * 2},
       order_by: {price: asc},
-      where: {pool: {_eq: "${marketAddress}"}, status: {_eq: "OPEN"}}
+      where: {
+        status: {_eq: "OPEN"},
+        market: {marketAddress: {_eq: "${marketAddress}"}}
+      }
     ) {
       price
-      quantity
+      quantityRemaining
       side
     }
   }`;
@@ -44,7 +47,7 @@ export async function fetchOrderBook(
 
     return orders.map((o: any) => ({
       price: parseFloat(o.price),
-      size: parseFloat(o.quantity),
+      size: parseFloat(o.quantityRemaining),
       side: o.side as "BUY" | "SELL",
     }));
   } catch (e) {

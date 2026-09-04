@@ -1,21 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { Address } from "viem";
 import { fetchMarketSentiment, type MarketSentiment } from "@/lib/orderbook";
 
 export function useMarketSentiment(marketAddress: Address | undefined) {
   const [sentiment, setSentiment] = useState<MarketSentiment | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const prevAddress = useRef<string>("");
 
-  const fetch = useCallback(async () => {
+  const fetchNow = useCallback(async () => {
     if (!marketAddress) {
+      setSentiment(null);
       setIsLoading(false);
       return;
     }
     try {
       const data = await fetchMarketSentiment(marketAddress);
-      setSentiment(data);
+      if (data) setSentiment(data);
     } catch {
       // keep previous
     } finally {
@@ -24,10 +26,14 @@ export function useMarketSentiment(marketAddress: Address | undefined) {
   }, [marketAddress]);
 
   useEffect(() => {
-    fetch();
-    const id = setInterval(fetch, 15000);
+    if (marketAddress !== prevAddress.current) {
+      prevAddress.current = marketAddress ?? "";
+      setIsLoading(true);
+    }
+    fetchNow();
+    const id = setInterval(fetchNow, 3000);
     return () => clearInterval(id);
-  }, [fetch]);
+  }, [fetchNow, marketAddress]);
 
-  return { sentiment, isLoading };
+  return { sentiment, isLoading, refetch: fetchNow };
 }

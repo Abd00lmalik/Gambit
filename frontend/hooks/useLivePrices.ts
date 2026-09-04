@@ -50,7 +50,7 @@ export function useLivePrices() {
 
   useEffect(() => {
     fetchPrices();
-    const interval = setInterval(fetchPrices, 10000);
+    const interval = setInterval(fetchPrices, 5000);
     return () => clearInterval(interval);
   }, [fetchPrices]);
 

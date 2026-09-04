@@ -12,7 +12,7 @@ interface MarketSentimentBarProps {
 
 export default function MarketSentimentBar({
   marketAddress,
-  refreshInterval = 15000,
+  refreshInterval = 3000,
 }: MarketSentimentBarProps) {
   const [sentiment, setSentiment] = useState<MarketSentiment | null>(null);
   const [loading, setLoading] = useState(true);

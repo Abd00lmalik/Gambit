@@ -226,7 +226,7 @@ export async function fetchMarketsByInterval(
   limit = 5
 ): Promise<DreamDexMarket[]> {
   const now = Math.floor(Date.now() / 1000);
-  // GraphQL doesn't support _gt on expiry. Fetch all, sort by expiry desc, filter client-side.
+  // Fetch only 15 non-expired markets (nearest expiry first). No batch opening price call.
   const query = `{
     Market(
       where: {
@@ -237,7 +237,7 @@ export async function fetchMarketsByInterval(
         intervalSec: {_eq: ${intervalSec}}
       }
       order_by: {expiry: desc}
-      limit: 50
+      limit: 15
     ) {
       id marketAddress marketId asset question strike indexPrice
       intervalSec expiry clobStatus binaryPoolAddress venueId
@@ -260,7 +260,7 @@ export async function fetchMarketsByInterval(
     return [];
   }
 
-  // Filter: has address, not expired yet, ideally still Trading
+  // Filter: has address, not expired yet
   const active = markets
     .filter((m: any) => m.marketAddress && Number(m.expiry) > now)
     .sort((a: any, b: any) => Number(a.expiry) - Number(b.expiry)); // nearest expiry first
@@ -288,19 +288,10 @@ export async function fetchMarketsByInterval(
 
   if (mapped.length === 0) return [];
 
-  // Use strike as opening price if available (DreamDEX stores it in strike field)
+  // DreamDEX strike IS the opening price — use it directly, no extra query
   for (const m of mapped) {
     if (m.strike > 0) {
       m.openingPrice = m.strike > 100000 ? m.strike / 100 : m.strike;
-    }
-  }
-
-  // Batch-fetch opening prices for markets without strike
-  const needPrices = mapped.filter((m: any) => !m.openingPrice);
-  if (needPrices.length > 0) {
-    const openingPrices = await fetchOpeningPrices(needPrices.map((m: any) => m.id));
-    for (const m of needPrices) {
-      m.openingPrice = openingPrices[m.id.toLowerCase()] ?? null;
     }
   }
 
@@ -311,20 +302,21 @@ export async function fetchLatestIndexPrices(): Promise<
   Record<string, number>
 > {
   const now = Math.floor(Date.now() / 1000);
+  // Only fetch 5m markets (fastest refresh, most current price). Limit 10.
   const query = `{
     Market(
       where: {
         marketType: {_eq: "BINARY"},
         finalized: {_eq: false},
-        voided: {_eq: false}
+        voided: {_eq: false},
+        intervalSec: {_eq: 300}
       }
       order_by: {expiry: desc}
-      limit: 30
+      limit: 10
     ) {
       asset
       strike
       indexPrice
-      intervalSec
       expiry
     }
   }`;
@@ -338,26 +330,21 @@ export async function fetchLatestIndexPrices(): Promise<
     const data = await res.json();
     const markets = data?.data?.Market ?? [];
 
-    const bestPrices: Record<string, { price: number; priority: number }> = {};
+    const bestPrices: Record<string, { price: number; expiry: number }> = {};
 
     for (const m of markets) {
       const asset = m.asset;
       if (asset !== "BTC" && asset !== "ETH") continue;
-      if (Number(m.expiry) <= now) continue; // skip expired
+      if (Number(m.expiry) <= now) continue;
       const indexPrice = Number(m.indexPrice);
       const strike = Number(m.strike);
       if (strike <= 0 && indexPrice <= 0) continue;
 
       const price = indexPrice > 0 ? indexPrice : (strike > 100000 ? strike / 100 : strike);
-      const interval = Number(m.intervalSec);
+      const expiry = Number(m.expiry);
 
-      let priority = 0;
-      if (interval === 300) priority = 3;
-      else if (interval === 900) priority = 2;
-      else if (interval === 3600) priority = 1;
-
-      if (!bestPrices[asset] || priority > bestPrices[asset].priority) {
-        bestPrices[asset] = { price, priority };
+      if (!bestPrices[asset] || expiry > bestPrices[asset].expiry) {
+        bestPrices[asset] = { price, expiry };
       }
     }
 
@@ -366,7 +353,7 @@ export async function fetchLatestIndexPrices(): Promise<
       result[asset] = data.price;
     }
 
-    // If DreamDEX didn't give us prices for BTC/ETH, try CoinGecko fallback
+    // CoinGecko fallback only if DreamDEX didn't return prices
     if (!result.BTC || !result.ETH) {
       try {
         const geckoRes = await fetch(

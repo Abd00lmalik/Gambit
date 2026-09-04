@@ -51,19 +51,20 @@ export default function CreateDuelPage() {
   // Fetch selected market from DreamDEX — only when asset or interval changes
   useEffect(() => {
     let cancelled = false;
-    setMarketLoading(true);
-    setSelectedMarket(null);
 
     const intervalSec = INTERVAL_SEC[selectedInterval] ?? 900;
     fetchMarketsByInterval(asset, intervalSec, 1)
       .then((markets) => {
-        if (!cancelled) setSelectedMarket(markets[0] ?? null);
+        if (!cancelled) {
+          setSelectedMarket(markets[0] ?? null);
+          setMarketLoading(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setSelectedMarket(null);
-      })
-      .finally(() => {
-        if (!cancelled) setMarketLoading(false);
+        if (!cancelled) {
+          setSelectedMarket(null);
+          setMarketLoading(false);
+        }
       });
 
     return () => { cancelled = true; };
