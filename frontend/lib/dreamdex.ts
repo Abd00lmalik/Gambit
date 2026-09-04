@@ -225,76 +225,97 @@ export async function fetchMarketsByInterval(
   intervalSec: number,
   limit = 5
 ): Promise<DreamDexMarket[]> {
-  const query = `{
-    Market(
-      where: {
-        marketType: {_eq: "BINARY"},
-        finalized: {_eq: false},
-        voided: {_eq: false},
-        asset: {_eq: "${asset}"},
-        intervalSec: {_eq: ${intervalSec}}
+  // Try clobStatus filter first, fall back to no filter if empty
+  const queries = [
+    // Primary: strict filter
+    `{
+      Market(
+        where: {
+          marketType: {_eq: "BINARY"},
+          finalized: {_eq: false},
+          voided: {_eq: false},
+          asset: {_eq: "${asset}"},
+          intervalSec: {_eq: ${intervalSec}},
+          clobStatus: {_eq: "Trading"}
+        }
+        order_by: {createdAtTimestamp: desc}
+        limit: ${limit}
+      ) {
+        id marketAddress marketId asset question strike indexPrice
+        intervalSec expiry clobStatus binaryPoolAddress venueId
+        finalized voided oracleQuestionId
       }
-      order_by: {createdAtTimestamp: desc}
-      limit: ${limit}
-    ) {
-      id
-      marketAddress
-      marketId
-      asset
-      question
-      strike
-      indexPrice
-      intervalSec
-      expiry
-      clobStatus
-      binaryPoolAddress
-      venueId
-      finalized
-      voided
-      oracleQuestionId
+    }`,
+    // Fallback: no clobStatus filter
+    `{
+      Market(
+        where: {
+          marketType: {_eq: "BINARY"},
+          finalized: {_eq: false},
+          voided: {_eq: false},
+          asset: {_eq: "${asset}"},
+          intervalSec: {_eq: ${intervalSec}}
+        }
+        order_by: {createdAtTimestamp: desc}
+        limit: ${limit}
+      ) {
+        id marketAddress marketId asset question strike indexPrice
+        intervalSec expiry clobStatus binaryPoolAddress venueId
+        finalized voided oracleQuestionId
+      }
+    }`,
+  ];
+
+  let markets: any[] = [];
+
+  for (const query of queries) {
+    try {
+      const res = await fetch(GRAPHQL_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      const data = await res.json();
+      const result = data?.data?.Market ?? [];
+      if (result.length > 0) {
+        markets = result;
+        break;
+      }
+    } catch (e) {
+      console.warn("DreamDEX query failed, trying fallback:", e);
     }
-  }`;
-
-  try {
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const data = await res.json();
-    const markets = data?.data?.Market ?? [];
-    const mapped = markets
-      .filter((m: any) => m.marketAddress && m.clobStatus === "Trading")
-      .map((m: any) => ({
-        id: m.id,
-        marketAddress: m.marketAddress as Address,
-        marketId: m.marketId,
-        asset: m.asset,
-        question: m.question,
-        strike: Number(m.strike),
-        indexPrice: Number(m.indexPrice) || 0,
-        openingPrice: null as number | null,
-        intervalSec: Number(m.intervalSec),
-        expiry: Number(m.expiry),
-        clobStatus: m.clobStatus,
-        binaryPoolAddress: m.binaryPoolAddress,
-        venueId: m.venueId,
-        finalized: m.finalized,
-        voided: m.voided,
-        oracleQuestionId: m.oracleQuestionId || "",
-      }));
-
-    // Batch-fetch opening prices for all markets
-    const openingPrices = await fetchOpeningPrices(mapped.map((m: any) => m.id));
-    for (const m of mapped) {
-      m.openingPrice = openingPrices[m.id.toLowerCase()] ?? null;
-    }
-
-    return mapped;
-  } catch (e) {
-    console.error("Failed to fetch DreamDEX markets:", e);
-    return [];
   }
+
+  const mapped = markets
+    .filter((m: any) => m.marketAddress)
+    .map((m: any) => ({
+      id: m.id,
+      marketAddress: m.marketAddress as Address,
+      marketId: m.marketId,
+      asset: m.asset,
+      question: m.question,
+      strike: Number(m.strike),
+      indexPrice: Number(m.indexPrice) || 0,
+      openingPrice: null as number | null,
+      intervalSec: Number(m.intervalSec),
+      expiry: Number(m.expiry),
+      clobStatus: m.clobStatus,
+      binaryPoolAddress: m.binaryPoolAddress,
+      venueId: m.venueId,
+      finalized: m.finalized,
+      voided: m.voided,
+      oracleQuestionId: m.oracleQuestionId || "",
+    }));
+
+  if (mapped.length === 0) return [];
+
+  // Batch-fetch opening prices for all markets
+  const openingPrices = await fetchOpeningPrices(mapped.map((m: any) => m.id));
+  for (const m of mapped) {
+    m.openingPrice = openingPrices[m.id.toLowerCase()] ?? null;
+  }
+
+  return mapped;
 }
 
 export async function fetchLatestIndexPrices(): Promise<
@@ -359,7 +380,8 @@ export async function fetchLatestIndexPrices(): Promise<
   }
 }
 
-export function intervalFromSec(sec: number): "15m" | "1h" | string {
+export function intervalFromSec(sec: number): string {
+  if (sec <= 300) return "5m";
   if (sec <= 900) return "15m";
   if (sec <= 3600) return "1h";
   if (sec <= 14400) return "4h";

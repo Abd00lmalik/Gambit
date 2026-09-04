@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 import { useAccount } from "wagmi";
 import { useLivePrices } from "@/hooks/useLivePrices";
@@ -9,34 +9,33 @@ import { useIntervalTimer } from "@/hooks/useMarkets";
 import { useDuelFactory } from "@/hooks/useContracts";
 import CountdownTimer from "@/components/CountdownTimer";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
-import { ASSET_INFO, STAKE_OPTIONS, INTERVAL_OPTIONS } from "@/lib/constants";
+import { ASSET_INFO, STAKE_OPTIONS } from "@/lib/constants";
 import {
   fetchMarketsByInterval,
-  fetchAvailableMarkets,
   verifyMarketAddress,
   type DreamDexMarket,
-  type MarketCombo,
 } from "@/lib/dreamdex";
-import type { Asset, Interval, Side } from "@/lib/types";
 import AssetIcon from "@/components/AssetIcon";
 
 const LiveChart = dynamic(() => import("@/components/LiveChart"), { ssr: false });
 
 const INTERVAL_SEC: Record<string, number> = {
-  "1m": 60,
   "5m": 300,
   "15m": 900,
   "1h": 3600,
-  "4h": 14400,
-  "1d": 86400,
 };
+
+const AVAILABLE_INTERVALS = ["5m", "15m", "1h"] as const;
+
+type CreationMode = "duel" | "squad";
 
 export default function CreateDuelPage() {
   const { isConnected } = useAccount();
   const prices = useLivePrices();
-  const [asset, setAsset] = useState<Asset>("BTC");
-  const [selectedInterval, setSelectedInterval] = useState<Interval>("15m");
-  const [side, setSide] = useState<Side>("UP");
+  const [mode, setMode] = useState<CreationMode | null>(null);
+  const [asset, setAsset] = useState<"BTC" | "ETH">("BTC");
+  const [selectedInterval, setSelectedInterval] = useState<string>("15m");
+  const [side, setSide] = useState<"UP" | "DOWN">("UP");
   const [stake, setStake] = useState<number>(0.5);
   const [customStake, setCustomStake] = useState("");
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -44,43 +43,18 @@ export default function CreateDuelPage() {
   const [selectedMarket, setSelectedMarket] = useState<DreamDexMarket | null>(null);
   const [marketLoading, setMarketLoading] = useState(false);
   const [verifying, setVerifying] = useState(false);
-  const [availableMarkets, setAvailableMarkets] = useState<MarketCombo[]>([]);
 
   const { createDuel, isPending } = useDuelFactory();
   const timer = useIntervalTimer(selectedInterval);
 
-  // Fetch available markets from DreamDEX on mount + every 60s
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      fetchAvailableMarkets().then((combos) => {
-        if (!cancelled) setAvailableMarkets(combos);
-      });
-    };
-    load();
-    const pollId = setInterval(load, 60000);
-    return () => { cancelled = true; clearInterval(pollId); };
-  }, []);
-
-  // Derive available assets and intervals from live DreamDEX data
-  const availableAssets = useMemo(() => {
-    const assets = [...new Set(availableMarkets.map((m) => m.asset))];
-    return assets.length > 0 ? assets : ["BTC", "ETH"] as string[];
-  }, [availableMarkets]);
-
-  const availableIntervals = useMemo(() => {
-    const intervals = [...new Set(availableMarkets
-      .filter((m) => m.asset === asset)
-      .map((m) => m.label))];
-    return intervals.length > 0 ? intervals : ["15m", "1h"] as string[];
-  }, [availableMarkets, asset]);
-
+  // Fetch selected market from DreamDEX — only when asset or interval changes
   useEffect(() => {
     let cancelled = false;
     setMarketLoading(true);
     setSelectedMarket(null);
 
-    fetchMarketsByInterval(asset, INTERVAL_SEC[selectedInterval], 1)
+    const intervalSec = INTERVAL_SEC[selectedInterval] ?? 900;
+    fetchMarketsByInterval(asset, intervalSec, 1)
       .then((markets) => {
         if (!cancelled) setSelectedMarket(markets[0] ?? null);
       })
@@ -94,11 +68,10 @@ export default function CreateDuelPage() {
     return () => { cancelled = true; };
   }, [asset, selectedInterval]);
 
-  const currentPrice = prices.find((p) => p.asset === asset)!;
-  const strike = currentPrice.price;
-  const upProb = currentPrice.upProbability;
+  const currentPrice = prices.find((p) => p.asset === asset);
+  const strike = currentPrice?.price ?? 0;
+  const upProb = currentPrice?.upProbability ?? 0.5;
   const joinDeadline = Math.floor(Date.now() / 1000) + timer.secondsLeft;
-  const marketExpiry = joinDeadline + INTERVAL_SEC[selectedInterval];
 
   const stakeAmount = customStake ? parseFloat(customStake) || 0 : stake;
   const isValid = stakeAmount >= 0.1 && stakeAmount <= 100 && isConnected && !!selectedMarket;
@@ -118,9 +91,7 @@ export default function CreateDuelPage() {
           hour12: false,
         });
 
-    // Use the real opening price from the DreamDEX oracle (reference question answer)
     const strikePrice = selectedMarket?.openingPrice ?? strike;
-
     return `Will ${asset} settle above $${strikePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })} at ${expiryTime} UTC?`;
   }, [asset, strike, timer.secondsLeft, selectedMarket]);
 
@@ -129,7 +100,6 @@ export default function CreateDuelPage() {
     setError(null);
     setVerifying(true);
     try {
-      // Verify market is legitimate before creating duel
       const verification = await verifyMarketAddress(selectedMarket.marketAddress);
       if (!verification.valid) {
         setError(verification.error || "Market verification failed");
@@ -148,8 +118,61 @@ export default function CreateDuelPage() {
     }
   }, [isValid, selectedMarket, selectedInterval, stakeAmount, createDuel]);
 
+  // Mode selection screen
+  if (!mode) {
+    return (
+      <div className="min-h-screen flex items-center justify-center py-8 px-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-lg w-full"
+        >
+          <h1 className="font-display text-3xl md:text-4xl font-bold text-foam mb-2 text-center">
+            Create
+          </h1>
+          <p className="font-body text-gray-400 mb-8 text-center">
+            Choose how you want to play.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <button
+              onClick={() => setMode("duel")}
+              className="rounded-2xl border border-teal/30 bg-teal/5 p-6 text-left transition-all hover:border-teal/50 hover:bg-teal/10 cursor-pointer group"
+            >
+              <div className="h-12 w-12 rounded-xl bg-teal/15 flex items-center justify-center mb-4">
+                <span className="text-2xl">⚔️</span>
+              </div>
+              <h3 className="font-display text-lg font-bold text-foam mb-1">1v1 Duel</h3>
+              <p className="font-body text-sm text-gray-400">
+                Challenge one opponent. Equal stakes. Winner takes all.
+              </p>
+            </button>
+
+            <button
+              onClick={() => setMode("squad")}
+              className="rounded-2xl border border-purple-500/30 bg-purple-500/5 p-6 text-left transition-all hover:border-purple-500/50 hover:bg-purple-500/10 cursor-pointer group"
+            >
+              <div className="h-12 w-12 rounded-xl bg-purple-500/15 flex items-center justify-center mb-4">
+                <span className="text-2xl">🎯</span>
+              </div>
+              <h3 className="font-display text-lg font-bold text-foam mb-1">Squad Pool</h3>
+              <p className="font-body text-sm text-gray-400">
+                Invite your squad. Multiple players per side. Proportional payout.
+              </p>
+            </button>
+          </div>
+
+          <p className="font-body text-xs text-gray-500 text-center mt-6">
+            Both use DreamDEX Event Contracts with auto-settlement.
+          </p>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // Success screen
   if (txHash) {
-    const duelInviteLink = typeof window !== "undefined"
+    const inviteLink = typeof window !== "undefined"
       ? `${window.location.origin}/arena?highlight=${txHash}`
       : "";
 
@@ -161,24 +184,23 @@ export default function CreateDuelPage() {
           className="max-w-md w-full text-center glass rounded-2xl p-8"
         >
           <div className="h-16 w-16 rounded-full bg-teal/15 flex items-center justify-center mx-auto mb-4">
-            <span className="text-3xl">⚔️</span>
+            <span className="text-3xl">{mode === "duel" ? "⚔️" : "🎯"}</span>
           </div>
-          <h2 className="font-display text-2xl font-bold text-foam mb-2">Duel Created!</h2>
+          <h2 className="font-display text-2xl font-bold text-foam mb-2">
+            {mode === "duel" ? "Duel Created!" : "Squad Pool Created!"}
+          </h2>
           <p className="font-body text-sm text-gray-400 mb-4">
-            Your challenge is live. Share the invite or wait for someone in the Arena to accept.
+            {mode === "duel"
+              ? "Your challenge is live. Share the invite or wait for someone in the Arena to accept."
+              : "Your squad pool is live. Share the invite link with your group."}
           </p>
 
-          {/* Invite link */}
           <div className="rounded-xl border border-teal/30 bg-teal/5 p-3 mb-4">
             <p className="font-body text-[10px] text-gray-400 mb-1 uppercase tracking-wider">Invite Link</p>
             <div className="flex items-center gap-2">
-              <code className="font-mono text-[11px] text-teal truncate flex-1">
-                {duelInviteLink}
-              </code>
+              <code className="font-mono text-[11px] text-teal truncate flex-1">{inviteLink}</code>
               <button
-                onClick={() => {
-                  navigator.clipboard.writeText(duelInviteLink);
-                }}
+                onClick={() => navigator.clipboard.writeText(inviteLink)}
                 className="shrink-0 rounded-lg bg-teal/20 px-3 py-1.5 font-body text-[10px] font-medium text-teal hover:bg-teal/30 transition-colors"
               >
                 Copy
@@ -202,7 +224,7 @@ export default function CreateDuelPage() {
               View Arena
             </a>
             <button
-              onClick={() => { setTxHash(null); setError(null); }}
+              onClick={() => { setTxHash(null); setError(null); setMode(null); }}
               className="rounded-xl border border-white/10 bg-white/5 px-6 py-2.5 font-display text-sm font-semibold text-foam transition-all hover:bg-white/10"
             >
               Create Another
@@ -213,6 +235,7 @@ export default function CreateDuelPage() {
     );
   }
 
+  // Creation form
   return (
     <div className="min-h-screen py-8 px-4">
       <div className="mx-auto max-w-4xl">
@@ -220,29 +243,38 @@ export default function CreateDuelPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: "spring", damping: 20, stiffness: 80 }}
+          className="mb-8"
         >
+          <div className="flex items-center gap-3 mb-2">
+            <button
+              onClick={() => setMode(null)}
+              className="font-body text-sm text-gray-400 hover:text-foam transition-colors cursor-pointer"
+            >
+              ← Back
+            </button>
+          </div>
           <h1 className="font-display text-3xl md:text-4xl font-bold text-foam mb-2">
-            Create a Duel
+            {mode === "duel" ? "Create a Duel" : "Create a Squad Pool"}
           </h1>
-          <p className="font-body text-gray-400 mb-8">
-            Pick your side. Set your stake. Challenge someone.
+          <p className="font-body text-gray-400">
+            {mode === "duel"
+              ? "Pick your side. Set your stake. Challenge someone."
+              : "Pick a side. Set your stake. Invite your squad."}
           </p>
         </motion.div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left: Config */}
           <div className="lg:col-span-2 space-y-6">
-            {/* Asset picker */}
+            {/* Asset picker — BTC and ETH only */}
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
               <label className="font-body text-xs uppercase tracking-wider text-gray-400 mb-2 block">Asset</label>
               <div className="grid grid-cols-2 gap-3">
-                {availableAssets.map((a) => {
+                {(["BTC", "ETH"] as const).map((a) => {
                   const assetPrice = prices.find((p) => p.asset === a);
-                  const assetInfo = ASSET_INFO[a as keyof typeof ASSET_INFO];
                   return (
                     <button
                       key={a}
-                      onClick={() => setAsset(a as Asset)}
+                      onClick={() => setAsset(a)}
                       className={`min-h-[44px] flex items-center justify-center gap-3 rounded-xl border p-4 font-display text-sm font-bold transition-all duration-200 cursor-pointer ${
                         asset === a
                           ? "border-teal bg-teal/10 text-foam glow-teal"
@@ -260,14 +292,14 @@ export default function CreateDuelPage() {
               </div>
             </motion.div>
 
-            {/* Interval toggle */}
+            {/* Interval toggle — 5m, 15m, 1h */}
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
               <label className="font-body text-xs uppercase tracking-wider text-gray-400 mb-2 block">Interval</label>
               <div className="flex rounded-xl border border-white/10 bg-white/[0.03] p-1">
-                {availableIntervals.map((iv) => (
+                {AVAILABLE_INTERVALS.map((iv) => (
                   <button
                     key={iv}
-                    onClick={() => setSelectedInterval(iv as Interval)}
+                    onClick={() => setSelectedInterval(iv)}
                     className={`flex-1 min-h-[44px] rounded-lg font-display text-sm font-semibold transition-all duration-200 cursor-pointer ${
                       selectedInterval === iv
                         ? "bg-teal text-carbon"
@@ -284,7 +316,7 @@ export default function CreateDuelPage() {
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }}>
               <div className="glass rounded-xl p-3 border border-teal/20">
                 <div className="flex items-center justify-between">
-                   <span className="font-body text-xs text-gray-400">Next {selectedInterval} window opens in</span>
+                  <span className="font-body text-xs text-gray-400">Next {selectedInterval} window opens in</span>
                   <span className="font-mono text-sm font-bold text-teal">{timer.formatted}</span>
                 </div>
               </div>
@@ -300,10 +332,10 @@ export default function CreateDuelPage() {
                   </p>
                 )}
                 {marketLoading && (
-                  <p className="font-body text-[10px] text-gray-500 mt-1">Loading markets from DreamDEX...</p>
+                  <p className="font-body text-[10px] text-gray-500 mt-1">Loading market from DreamDEX...</p>
                 )}
                 {!marketLoading && !selectedMarket && (
-                   <p className="font-body text-[10px] text-down mt-1">No active market found for {asset} {selectedInterval}. Try a different interval.</p>
+                  <p className="font-body text-[10px] text-down mt-1">No active market found for {asset} {selectedInterval}.</p>
                 )}
               </div>
             </motion.div>
@@ -380,7 +412,7 @@ export default function CreateDuelPage() {
                   </button>
                 ))}
                 <button
-                  onClick={() => { setCustomStake("100"); }}
+                  onClick={() => setCustomStake("100")}
                   className={`min-h-[36px] flex-1 rounded-lg border py-1.5 font-body text-xs font-medium transition-all duration-200 cursor-pointer ${
                     customStake === "100"
                       ? "border-teal bg-teal/10 text-teal"
@@ -401,7 +433,9 @@ export default function CreateDuelPage() {
               transition={{ type: "spring", damping: 20, stiffness: 80, delay: 0.3 }}
               className="sticky top-24 glass rounded-2xl p-5 border border-teal/20 space-y-5"
             >
-              <h3 className="font-display text-lg font-bold text-foam">Duel Summary</h3>
+              <h3 className="font-display text-lg font-bold text-foam">
+                {mode === "duel" ? "Duel Summary" : "Pool Summary"}
+              </h3>
 
               <div className="space-y-3">
                 <SummaryRow label="Asset" value={asset} />
@@ -410,7 +444,13 @@ export default function CreateDuelPage() {
                 <SummaryRow label="Opening Price" value={`$${(selectedMarket?.openingPrice ?? strike).toLocaleString("en-US", { minimumFractionDigits: 2 })}`} />
                 <SummaryRow label="Stake" value={`${stakeAmount} STT`} accent="text-foam" />
                 <div className="border-t border-white/10 pt-3">
-                  <SummaryRow label="Potential Payout" value={`${(stakeAmount * 2 * 0.975).toFixed(3)} STT`} accent="text-teal" />
+                  <SummaryRow
+                    label="Potential Payout"
+                    value={mode === "duel"
+                      ? `${(stakeAmount * 2 * 0.975).toFixed(3)} STT`
+                      : "Proportional"}
+                    accent="text-teal"
+                  />
                 </div>
               </div>
 
@@ -430,15 +470,31 @@ export default function CreateDuelPage() {
                 onClick={handleCreate}
                 className={`min-h-[48px] w-full rounded-xl font-display text-base font-bold transition-all duration-200 cursor-pointer ${
                   isValid && !isPending
-                    ? "bg-foam text-carbon hover:bg-foam-dark hover:shadow-lg hover:shadow-foam/20 active:scale-[0.97]"
+                    ? mode === "squad"
+                      ? "bg-purple-500 text-white hover:bg-purple-600 hover:shadow-lg hover:shadow-purple-500/20 active:scale-[0.97]"
+                      : "bg-foam text-carbon hover:bg-foam-dark hover:shadow-lg hover:shadow-foam/20 active:scale-[0.97]"
                     : "bg-white/10 text-gray-500 cursor-not-allowed"
                 }`}
               >
-                {isPending ? "Creating..." : verifying ? "Verifying Market..." : marketLoading ? "Loading markets..." : !isConnected ? "Connect Wallet First" : !selectedMarket ? "No Market Available" : "Create Challenge →"}
+                {isPending
+                  ? "Creating..."
+                  : verifying
+                    ? "Verifying Market..."
+                    : marketLoading
+                      ? "Loading market..."
+                      : !isConnected
+                        ? "Connect Wallet First"
+                        : !selectedMarket
+                          ? "No Market Available"
+                          : mode === "duel"
+                            ? "Create Challenge →"
+                            : "Create Squad Pool →"}
               </button>
 
               <p className="font-body text-[11px] text-gray-500 text-center leading-relaxed">
-                Funds are held in an isolated contract until your opponent joins or the deadline passes. Cancel anytime before someone joins.
+                {mode === "duel"
+                  ? "Funds are held in an isolated contract until your opponent joins or the deadline passes. Cancel anytime before someone joins."
+                  : "Create a pool for this market. Others can then join either side."}
               </p>
             </motion.div>
           </div>

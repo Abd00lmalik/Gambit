@@ -1,65 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount } from "wagmi";
 import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
-import {
-  updateSystemChallenges,
-  type SystemChallenge,
-} from "@/lib/autoPopulate";
-import SystemDuelCard from "@/components/SystemDuelCard";
-import { SquadPoolCard, type SquadPoolData } from "@/components/SquadPoolCard";
 import AssetIcon from "@/components/AssetIcon";
 
 const FILTERS = ["All", "BTC", "ETH", "Open", "Live", "Settled"] as const;
-
-// Mock squad pools for demo — replaced by on-chain reads once pool factory is deployed
-const MOCK_SQUAD_POOLS: SquadPoolData[] = [
-  {
-    address: "0xa3b1f2c4d5e6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
-    squadName: "BTC Bulls",
-    asset: "BTC",
-    interval: "15m",
-    openingPrice: 58432.10,
-    expiry: Math.floor(Date.now() / 1000) + 900,
-    creator: "0x76d73b841d6b086cf98dda0f97588ec9f463472b6f016eae73f51b966be7aed7",
-    totalUp: 3.2,
-    totalDown: 1.1,
-    participantCount: 4,
-  },
-  {
-    address: "0xb4c2e3f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1",
-    squadName: "ETH Bears",
-    asset: "ETH",
-    interval: "1h",
-    openingPrice: 3245.80,
-    expiry: Math.floor(Date.now() / 1000) + 3600,
-    creator: "0x5E2D3BD4ad0aE1CDF49DdB0F0C96d55790199cE6",
-    totalUp: 0.8,
-    totalDown: 2.4,
-    participantCount: 3,
-  },
-];
 
 export default function ArenaPage() {
   const { isConnected } = useAccount();
   const { duels, isLoading } = useDuelCreatedEvents();
   const [filter, setFilter] = useState<string>("All");
   const [sort, setSort] = useState<"newest" | "stake">("newest");
-  const [systemChallenges, setSystemChallenges] = useState<SystemChallenge[]>([]);
-
-  useEffect(() => {
-    const loadSystemChallenges = async () => {
-      const challenges = await updateSystemChallenges();
-      setSystemChallenges(challenges);
-    };
-
-    loadSystemChallenges();
-    const interval = setInterval(loadSystemChallenges, 30000);
-    return () => clearInterval(interval);
-  }, []);
 
   const filtered = duels
     .filter((d) => {
@@ -73,22 +27,6 @@ export default function ArenaPage() {
       if (sort === "newest") return 0;
       return parseFloat(b.stakeAmount) - parseFloat(a.stakeAmount);
     });
-
-  const filteredSystemChallenges = systemChallenges.filter((c) => {
-    if (filter === "All") return true;
-    if (filter === "Open") return true;
-    return c.asset === filter;
-  });
-
-  const showSystemChallenges =
-    filteredSystemChallenges.length > 0 &&
-    (filter === "All" || filter === "Open" || filter === "BTC" || filter === "ETH");
-
-  const filteredPools = MOCK_SQUAD_POOLS.filter((p) => {
-    if (filter === "All") return true;
-    if (filter === "Open") return true;
-    return p.asset === filter;
-  });
 
   return (
     <div className="min-h-screen py-8 px-4">
@@ -161,22 +99,9 @@ export default function ArenaPage() {
               </div>
             ))}
           </div>
-        ) : filtered.length > 0 || showSystemChallenges || filteredPools.length > 0 ? (
+        ) : filtered.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <AnimatePresence mode="popLayout">
-              {showSystemChallenges &&
-                filteredSystemChallenges.map((challenge, i) => (
-                  <motion.div
-                    key={challenge.id}
-                    initial={{ opacity: 0, y: 16 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    transition={{ type: "spring", damping: 20, stiffness: 100, delay: i * 0.05 }}
-                    layout
-                  >
-                    <SystemDuelCard challenge={challenge} />
-                  </motion.div>
-                ))}
               {filtered.map((duel, i) => (
                 <motion.div
                   key={duel.address}
@@ -187,18 +112,6 @@ export default function ArenaPage() {
                   layout
                 >
                   <DuelCardOnChain duel={duel} />
-                </motion.div>
-              ))}
-              {filteredPools.map((pool, i) => (
-                <motion.div
-                  key={pool.address}
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.95 }}
-                  transition={{ type: "spring", damping: 20, stiffness: 100, delay: i * 0.05 }}
-                  layout
-                >
-                  <SquadPoolCard pool={pool} />
                 </motion.div>
               ))}
             </AnimatePresence>
@@ -216,8 +129,6 @@ function DuelCardOnChain({ duel }: { duel: any }) {
   const isOpen = state === DuelState.CREATED;
   const isLive = state === DuelState.LOCKED;
   const isSettled = state === DuelState.SETTLED;
-  const isCancelled = state === DuelState.CANCELLED;
-  const isRefunded = state === DuelState.REFUNDED;
 
   const stateLabel = DUEL_STATE_LABELS[state] || "Unknown";
   const hasJoined = duel.playerB !== "0x0000000000000000000000000000000000000000";
@@ -235,7 +146,6 @@ function DuelCardOnChain({ duel }: { duel: any }) {
       href={`/duel/${duel.address}`}
       className={`block rounded-2xl border p-4 transition-all duration-200 group cursor-pointer ${stateColors[state] || "border-white/10 bg-white/[0.03]"}`}
     >
-      {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500/15 text-orange-400 text-xs font-bold">
@@ -253,7 +163,6 @@ function DuelCardOnChain({ duel }: { duel: any }) {
         </span>
       </div>
 
-      {/* Stake */}
       <div className="flex items-center justify-between mb-3">
         <span className="font-display text-lg font-bold text-foam">{duel.stakeAmount} STT</span>
         {hasJoined && !isSettled && (
@@ -261,7 +170,6 @@ function DuelCardOnChain({ duel }: { duel: any }) {
         )}
       </div>
 
-      {/* Players */}
       <div className="space-y-1.5 mb-3">
         <div className="flex items-center gap-2">
           <div className="h-5 w-5 rounded-full bg-teal/15 flex items-center justify-center text-[10px] font-bold text-teal">
@@ -288,7 +196,6 @@ function DuelCardOnChain({ duel }: { duel: any }) {
         )}
       </div>
 
-      {/* Footer */}
       <div className="pt-3 border-t border-white/5 flex items-center justify-between">
         <span className="font-body text-[10px] text-gray-500">
           {isOpen ? "Join before deadline" : isLive ? "Awaiting resolution" : isSettled ? "Resolved" : stateLabel}

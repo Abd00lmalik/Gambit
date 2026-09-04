@@ -4,23 +4,25 @@ import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useAccount } from "wagmi";
 import {
-  fetchAvailableMarkets,
   fetchMarketsByInterval,
   verifyMarketAddress,
   type DreamDexMarket,
-  type MarketCombo,
 } from "@/lib/dreamdex";
 import AssetIcon from "@/components/AssetIcon";
 
 const INTERVAL_SEC: Record<string, number> = {
-  "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400,
+  "5m": 300,
+  "15m": 900,
+  "1h": 3600,
 };
+
+const AVAILABLE_ASSETS = ["BTC", "ETH"] as const;
+const AVAILABLE_INTERVALS = ["5m", "15m", "1h"] as const;
 
 export default function SquadPoolPage() {
   const { isConnected, address } = useAccount();
-  const [availableMarkets, setAvailableMarkets] = useState<MarketCombo[]>([]);
-  const [selectedAsset, setSelectedAsset] = useState("BTC");
-  const [selectedInterval, setSelectedInterval] = useState("15m");
+  const [selectedAsset, setSelectedAsset] = useState<"BTC" | "ETH">("BTC");
+  const [selectedInterval, setSelectedInterval] = useState<string>("15m");
   const [selectedMarket, setSelectedMarket] = useState<DreamDexMarket | null>(null);
   const [marketLoading, setMarketLoading] = useState(false);
   const [squadName, setSquadName] = useState("");
@@ -30,24 +32,6 @@ export default function SquadPoolPage() {
   const [poolAddress, setPoolAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
-
-  // Fetch available markets
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      fetchAvailableMarkets().then((combos) => {
-        if (!cancelled) setAvailableMarkets(combos);
-      });
-    };
-    load();
-    const pollId = setInterval(load, 60000);
-    return () => { cancelled = true; clearInterval(pollId); };
-  }, []);
-
-  const availableAssets = [...new Set(availableMarkets.map((m) => m.asset))];
-  const availableIntervals = availableMarkets
-    .filter((m) => m.asset === selectedAsset)
-    .map((m) => m.label);
 
   // Fetch selected market
   useEffect(() => {
@@ -87,8 +71,6 @@ export default function SquadPoolPage() {
         return;
       }
 
-      // Create pool transaction would go here via wallet client
-      // For demo: show success with invite link
       const mockPoolAddress = "0x" + Math.random().toString(16).slice(2, 42).padEnd(40, "0");
       setPoolAddress(mockPoolAddress);
       setTxHash("0x" + Math.random().toString(16).slice(2, 66));
@@ -100,12 +82,10 @@ export default function SquadPoolPage() {
   }, [selectedMarket, isConnected]);
 
   const copyInviteLink = useCallback(() => {
-    if (inviteLink) {
-      navigator.clipboard.writeText(inviteLink);
-    }
+    if (inviteLink) navigator.clipboard.writeText(inviteLink);
   }, [inviteLink]);
 
-  // Success state — show invite link
+  // Success state
   if (poolState === "success" && poolAddress) {
     return (
       <div className="min-h-screen flex items-center justify-center py-8 px-4">
@@ -124,7 +104,6 @@ export default function SquadPoolPage() {
             Share this invite link with your squad. Only people with the link can join.
           </p>
 
-          {/* Invite link box */}
           <div className="rounded-xl border border-teal/30 bg-teal/5 p-3 mb-6">
             <p className="font-body text-[10px] text-gray-400 mb-1 uppercase tracking-wider">Invite Link</p>
             <div className="flex items-center gap-2">
@@ -140,7 +119,6 @@ export default function SquadPoolPage() {
             </div>
           </div>
 
-          {/* Pool details */}
           <div className="text-left space-y-2 mb-6 rounded-xl border border-white/5 bg-white/[0.02] p-4">
             <div className="flex justify-between">
               <span className="font-body text-xs text-gray-400">Market</span>
@@ -203,12 +181,11 @@ export default function SquadPoolPage() {
             Squad Pool
           </h1>
           <p className="font-body text-gray-400 mb-8">
-            Private pool for your squad. Invite only. See who's in before you commit.
+            Private pool for your squad. Invite only. See who&apos;s in before you commit.
           </p>
         </motion.div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left: Config */}
           <div className="lg:col-span-2 space-y-6">
             {/* Squad name */}
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
@@ -222,11 +199,11 @@ export default function SquadPoolPage() {
               />
             </motion.div>
 
-            {/* Asset picker */}
+            {/* Asset picker — BTC and ETH only */}
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
               <label className="font-body text-xs uppercase tracking-wider text-gray-400 mb-2 block">Asset</label>
               <div className="grid grid-cols-2 gap-3">
-                {availableAssets.map((a) => (
+                {AVAILABLE_ASSETS.map((a) => (
                   <button
                     key={a}
                     onClick={() => setSelectedAsset(a)}
@@ -243,11 +220,11 @@ export default function SquadPoolPage() {
               </div>
             </motion.div>
 
-            {/* Interval picker */}
+            {/* Interval picker — 5m, 15m, 1h */}
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
               <label className="font-body text-xs uppercase tracking-wider text-gray-400 mb-2 block">Interval</label>
               <div className="flex rounded-xl border border-white/10 bg-white/[0.03] p-1">
-                {availableIntervals.map((iv) => (
+                {AVAILABLE_INTERVALS.map((iv) => (
                   <button
                     key={iv}
                     onClick={() => setSelectedInterval(iv)}

@@ -9,7 +9,7 @@ import { useSupabaseProfile } from "@/hooks/useSupabaseProfile";
 import PfpUpload from "@/components/PfpUpload";
 import StatCounter from "@/components/StatCounter";
 import AssetIcon from "@/components/AssetIcon";
-import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
+import { DuelState } from "@/lib/contracts";
 
 function formatAddress(addr: string): string {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -39,9 +39,9 @@ export default function ProfilePage({
     [duels, addressLower]
   );
 
-  // Compute stats from on-chain data (authoritative)
   const chainStats = useMemo(() => {
     let wins = 0;
+    let losses = 0;
     let biggestWin = 0;
 
     const settled = userDuels.filter((d) => d.state === DuelState.SETTLED);
@@ -59,7 +59,6 @@ export default function ProfilePage({
     };
   }, [userDuels]);
 
-  // Merge DB profile with chain stats (DB is cached, chain is live)
   const stats = {
     wins: profile?.wins ?? chainStats.wins,
     losses: profile?.losses ?? chainStats.losses,
@@ -82,7 +81,7 @@ export default function ProfilePage({
     [userDuels]
   );
 
-  const isLoading = chainLoading || dbLoading;
+  const isLoading = chainLoading && duels.length === 0;
 
   if (isLoading) {
     return (

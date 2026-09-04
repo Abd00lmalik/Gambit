@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { type Address, formatEther } from "viem";
 import { usePublicClient } from "wagmi";
 import { somnia } from "@/lib/config";
@@ -19,11 +19,12 @@ export interface OnChainDuel {
 export function useDuelCreatedEvents() {
   const [duels, setDuels] = useState<OnChainDuel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const isInitialLoad = useRef(true);
   const client = usePublicClient({ chainId: somnia.id });
 
   const fetchDuels = useCallback(async () => {
     if (!client) return;
-    setIsLoading(true);
+    if (isInitialLoad.current) setIsLoading(true);
 
     try {
       const logs = await client.getLogs({
@@ -53,13 +54,6 @@ export function useDuelCreatedEvents() {
             address: clone!,
             abi: WAGER_ABI,
             functionName: "state",
-          });
-
-          const playerBBalance = await client.readContract({
-            address: clone!,
-            abi: WAGER_ABI,
-            functionName: "deposits",
-            args: [playerA!],
           });
 
           let playerB: Address = "0x0000000000000000000000000000000000000000";
@@ -100,13 +94,14 @@ export function useDuelCreatedEvents() {
     } catch (e) {
       console.error("Failed to fetch duel events:", e);
     } finally {
+      isInitialLoad.current = false;
       setIsLoading(false);
     }
   }, [client]);
 
   useEffect(() => {
     fetchDuels();
-    const interval = setInterval(fetchDuels, 15000);
+    const interval = setInterval(fetchDuels, 30000);
     return () => clearInterval(interval);
   }, [fetchDuels]);
 
