@@ -149,7 +149,8 @@ function deriveOpeningPrice(strike: number, question: string): number | null {
 function buildMarketQuestion(
   asset: string,
   openingPrice: number | null,
-  expiry: number
+  expiry: number,
+  isApproximate: boolean = true
 ): string {
   const expiryTime = new Date(expiry * 1000).toLocaleTimeString("en-US", {
     hour: "2-digit",
@@ -158,7 +159,8 @@ function buildMarketQuestion(
     hour12: false,
   });
   if (openingPrice !== null && openingPrice > 0) {
-    return `Will ${asset} settle above $${openingPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} at ${expiryTime} UTC?`;
+    const prefix = isApproximate ? "~" : "";
+    return `Will ${asset} settle above ${prefix}$${openingPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} at ${expiryTime} UTC?`;
   }
   return `Will ${asset} close above its opening price at ${expiryTime} UTC?`;
 }
@@ -185,6 +187,7 @@ function mapMarketRaw(m: any): any {
     binaryPoolAddress: m.binaryPoolAddress || "",
     venueId: m.venueId || "",
     oracleQuestionId: m.oracleQuestionId || "",
+    priceIsApproximate: true,
   };
 }
 
@@ -200,7 +203,7 @@ async function enrichMarketWithPrice(raw: any): Promise<DreamDexMarket> {
   }
 
   // Build display question with the resolved opening price
-  m.displayQuestion = buildMarketQuestion(m.asset, m.openingPrice, m.expiry);
+  m.displayQuestion = buildMarketQuestion(m.asset, m.openingPrice, m.expiry, m.priceIsApproximate);
 
   return m as DreamDexMarket;
 }
@@ -303,6 +306,7 @@ export interface DreamDexMarket {
   binaryPoolAddress: string;
   venueId: string;
   oracleQuestionId: string;
+  priceIsApproximate: boolean;
 }
 
 // ── Fetch markets ──────────────────────────────────────────────

@@ -43,7 +43,7 @@ export default function SystemDuelCard({ challenge }: SystemDuelCardProps) {
           {challenge.suggestedStake} STT
         </span>
         <span className="font-body text-xs text-gray-400">
-          ${challenge.openingPrice.toLocaleString()}
+          ~${challenge.openingPrice.toLocaleString()}
         </span>
       </div>
 

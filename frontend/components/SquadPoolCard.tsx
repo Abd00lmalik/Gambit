@@ -66,7 +66,7 @@ export function SquadPoolCard({ pool }: { pool: SquadPoolData }) {
       {/* Market info */}
       <div className="mb-3">
         <p className="font-body text-[11px] text-gray-400">
-          Will {pool.asset} close above ${pool.openingPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}?
+          Will {pool.asset} close above ~${pool.openingPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}?
         </p>
         <p className="font-body text-[10px] text-gray-500 mt-0.5">
           {pool.interval} · {isExpired ? "Expired" : `Expires ${new Date(pool.expiry * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false })} UTC`}

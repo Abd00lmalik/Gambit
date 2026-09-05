@@ -437,7 +437,7 @@ export default function CreateDuelPage() {
                 <SummaryRow label="Asset" value={asset} />
                 <SummaryRow label="Interval" value={selectedInterval} />
                 <SummaryRow label="Your Side" value={side === "UP" ? "▲ Up" : "▼ Down"} accent={side === "UP" ? "text-up" : "text-down"} />
-                <SummaryRow label="Opening Price" value={`$${(selectedMarket?.openingPrice ?? strike).toLocaleString("en-US", { minimumFractionDigits: 2 })}`} />
+                <SummaryRow label="Opening Price" value={`~$${(selectedMarket?.openingPrice ?? strike).toLocaleString("en-US", { minimumFractionDigits: 2 })}`} />
                 <SummaryRow label="Stake" value={`${stakeAmount} STT`} accent="text-foam" />
                 <div className="border-t border-white/10 pt-3">
                   <SummaryRow

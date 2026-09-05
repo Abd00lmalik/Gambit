@@ -171,7 +171,7 @@ export default function SquadPoolDetailPage({ params }: { params: Promise<{ addr
               className="glass rounded-xl p-4 border-l-2 border-teal"
             >
               <p className="font-body text-sm text-foam">
-                Will {pool.asset} close above ${pool.openingPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}?
+                Will {pool.asset} close above ~${pool.openingPrice.toLocaleString("en-US", { minimumFractionDigits: 2 })}?
               </p>
               <div className="flex items-center gap-4 mt-2">
                 <p className="font-body text-[10px] text-gray-500">
