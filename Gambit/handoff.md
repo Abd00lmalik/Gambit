@@ -21,7 +21,7 @@ Gambit reads DreamDEX Event Contracts as an oracle and leverages **Somnia reacti
 ### Factory v6 (CURRENT — ACTIVE)
 | Contract | Address |
 |---|---|
-| GambitFactory | `0x9e66dD3D9C75825bbe2f2D5B494cE89E08828a06` |
+| GambitFactory | `0xf96913baFdb849c3c9d765879247F3EC9D3749cF` |
 | Implementation | `0xEa6971C152341C0c92c292908b2215BE260114d5` |
 | Balance | 50 STT |
 

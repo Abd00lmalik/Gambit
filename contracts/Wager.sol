@@ -38,6 +38,8 @@ contract Wager is SomniaEventHandler {
     event ReactiveSettled(uint256 timestamp, uint256 blockNumber);
     /// @notice Emitted when reactive void-refund fires.
     event ReactiveVoided(uint256 timestamp, uint256 blockNumber);
+    /// @notice Emitted when reactive auto-refund fires for unjoined duel.
+    event ReactiveAutoRefunded(uint256 timestamp, uint256 blockNumber);
     /// @notice Emitted when subscription is created.
     event SubscriptionCreated(uint256 subscriptionId);
     /// @notice Emitted when subscription is cancelled.
@@ -145,6 +147,14 @@ contract Wager is SomniaEventHandler {
             eventTopics[0] == keccak256("Resolved(uint32,uint256[])"),
             "!Resolved"
         );
+
+        // If market resolves while duel is still open (no Player B joined),
+        // automatically refund Player A's stake — zero manual intervention.
+        if (state == WagerState.CREATED) {
+            _executeCancelRefund();
+            emit ReactiveAutoRefunded(block.timestamp, block.number);
+            return;
+        }
 
         // Only process if we're in LOCKED state (both players joined, waiting for resolution)
         if (state != WagerState.LOCKED) return;
@@ -272,10 +282,9 @@ contract Wager is SomniaEventHandler {
         _reclaimSubscriptionFund();
     }
 
-    /// @notice Player A reclaims stake if B never joined before deadline.
-    function cancel() external inState(WagerState.CREATED) onlyOwner {
-        require(block.timestamp > joinDeadline, "deadline not reached");
-
+    /// @dev Refund Player A only when market resolves but B never joined.
+    ///      Callable from _onEvent() (reactive) or cancel() (manual after deadline).
+    function _executeCancelRefund() internal {
         state = WagerState.CANCELLED;
 
         uint256 aStake = deposits[playerA];
@@ -285,8 +294,13 @@ contract Wager is SomniaEventHandler {
             require(ok, "cancel refund failed");
         }
 
-        // Reclaim subscription fund if it was set up
         _reclaimSubscriptionFund();
+    }
+
+    /// @notice Player A reclaims stake if B never joined before deadline.
+    function cancel() external inState(WagerState.CREATED) onlyOwner {
+        require(block.timestamp > joinDeadline, "deadline not reached");
+        _executeCancelRefund();
     }
 
     /// @notice Cancel the reactivity subscription (e.g. if duel is cancelled/refunded).

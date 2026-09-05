@@ -37,9 +37,25 @@ contract MockFeeRecipient {
     receive() external payable {}
 }
 
+/// @dev Test-only Wager subclass that exposes _onEvent for reactivity testing.
+contract TestableWager is Wager {
+    function depositAs(address player) external payable {
+        deposits[player] += msg.value;
+    }
+
+    function simulateOnEvent(
+        address emitter,
+        bytes32[] calldata eventTopics,
+        bytes calldata eventData
+    ) external {
+        _onEvent(emitter, eventTopics, eventData);
+    }
+}
+
 /// @title Wager + GambitFactory Test Suite
 /// @dev Covers: happy path, void/refund, cancel/timeout, fee math, overpayment, edge cases
 contract GambitTest is Test {
+    receive() external payable {}
     Wager public wagerLogic;
     GambitFactory public factory;
     MockMarket public marketYesWon;
@@ -970,5 +986,117 @@ contract GambitTest is Test {
 
         // Clone was settled correctly
         assertTrue(Wager(payable(clone1)).state() == Wager.WagerState.SETTLED);
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // AUTO-REFUND IF UNJOINED: market resolves while OPEN
+    // ═══════════════════════════════════════════════════════
+
+    /// @dev Helper: deploy a standalone TestableWager for reactivity testing.
+    ///      NOT a clone — direct deployment so simulateOnEvent() is callable.
+    function _deployTestableClone(MockMarket market) internal returns (TestableWager tw) {
+        tw = new TestableWager();
+
+        // Initialize manually (factory = address(this), since we're calling directly)
+        tw.initialize(alice, STAKE, address(market), FEE_BPS, address(feeRecipient), block.timestamp + JOIN_DEADLINE_OFFSET);
+
+        // Record alice's deposit (we are the factory)
+        vm.deal(alice, STAKE);
+        tw.recordDeposit{value: STAKE}(alice);
+
+        // Fund subscription from "factory" (this test contract)
+        vm.deal(address(this), 35 ether);
+        (bool fundOk,) = address(tw).call{value: 35 ether}("");
+        require(fundOk, "sub fund failed");
+    }
+
+    function test_autoRefund_unjoinedMarketResolves() public {
+        // Deploy a resolved market
+        MockMarket market = new MockMarket(4, false);
+        market.setPayout(10000000, 0);
+
+        TestableWager tw = _deployTestableClone(market);
+
+        // Verify duel is in CREATED state (no player B joined)
+        assertEq(uint8(tw.state()), uint8(Wager.WagerState.CREATED));
+        assertEq(tw.playerB(), address(0));
+
+        // Record Alice's balance before
+        uint256 aliceBalBefore = alice.balance;
+
+        // Simulate the Resolved event being delivered by Somnia reactivity precompile
+        bytes32 resolvedTopic = keccak256("Resolved(uint32,uint256[])");
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = resolvedTopic;
+
+        tw.simulateOnEvent(address(market), topics, "");
+
+        // Duel should now be CANCELLED, Alice refunded
+        assertEq(uint8(tw.state()), uint8(Wager.WagerState.CANCELLED));
+        assertEq(alice.balance - aliceBalBefore, STAKE);
+        assertEq(tw.deposits(alice), 0);
+    }
+
+    function test_autoRefund_subscriptionFundReclaimed() public {
+        MockMarket market = new MockMarket(4, false);
+        market.setPayout(10000000, 0);
+
+        TestableWager tw = _deployTestableClone(market);
+
+        // "factory" for this standalone wager is address(this) (test contract)
+        uint256 factoryBalBefore = address(this).balance;
+
+        // Simulate Resolved event
+        bytes32 resolvedTopic = keccak256("Resolved(uint32,uint256[])");
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = resolvedTopic;
+        tw.simulateOnEvent(address(market), topics, "");
+
+        // Subscription fund should be swept back to factory (test contract)
+        assertGt(address(this).balance, factoryBalBefore);
+        assertEq(uint8(tw.state()), uint8(Wager.WagerState.CANCELLED));
+    }
+
+    function test_autoRefund_doesNotFireWhenLocked() public {
+        MockMarket market = new MockMarket(4, false);
+        market.setPayout(10000000, 0);
+
+        TestableWager tw = _deployTestableClone(market);
+
+        // Bob deposits and joins → state = LOCKED
+        vm.deal(bob, STAKE);
+        vm.prank(bob);
+        (bool sent,) = address(tw).call{value: STAKE}("");
+        assertTrue(sent);
+        vm.prank(bob);
+        tw.join();
+        assertEq(uint8(tw.state()), uint8(Wager.WagerState.LOCKED));
+
+        // Simulate Resolved event — should settle, NOT auto-refund
+        bytes32 resolvedTopic = keccak256("Resolved(uint32,uint256[])");
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = resolvedTopic;
+        tw.simulateOnEvent(address(market), topics, "");
+
+        // State should be SETTLED, not CANCELLED
+        assertEq(uint8(tw.state()), uint8(Wager.WagerState.SETTLED));
+    }
+
+    function test_autoRefund_wrongMarketIgnored() public {
+        MockMarket market = new MockMarket(4, false);
+        market.setPayout(10000000, 0);
+
+        MockMarket wrongMarket = new MockMarket(4, false);
+        wrongMarket.setPayout(10000000, 0);
+
+        TestableWager tw = _deployTestableClone(market);
+
+        // Simulate Resolved event from WRONG market — should be ignored
+        bytes32 resolvedTopic = keccak256("Resolved(uint32,uint256[])");
+        bytes32[] memory topics = new bytes32[](1);
+        topics[0] = resolvedTopic;
+
+        vm.expectRevert("!market");
+        tw.simulateOnEvent(address(wrongMarket), topics, "");
     }
 }

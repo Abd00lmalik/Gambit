@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { type Address, formatEther } from "viem";
 import { usePublicClient } from "wagmi";
 import { somnia } from "@/lib/config";
-import { FACTORY_ADDRESS, FACTORY_ABI, WAGER_ABI } from "@/lib/contracts";
+import { FACTORY_ADDRESS, WAGER_ABI } from "@/lib/contracts";
+
+const CHUNK = BigInt(900);
 
 export interface OnChainDuel {
   address: Address;
@@ -27,67 +29,73 @@ export function useDuelCreatedEvents() {
     if (isInitialLoad.current) setIsLoading(true);
 
     try {
-      const logs = await client.getLogs({
-        address: FACTORY_ADDRESS,
-        event: {
-          type: "event",
-          name: "DuelCreated",
-          inputs: [
-            { name: "clone", type: "address", indexed: true },
-            { name: "playerA", type: "address", indexed: true },
-            { name: "stakeAmount", type: "uint256", indexed: false },
-            { name: "marketAddress", type: "address", indexed: false },
-            { name: "joinDeadline", type: "uint256", indexed: false },
-          ],
-        },
-        fromBlock: BigInt(0),
-        toBlock: "latest",
-      });
+      const latest = await client.getBlockNumber();
+      const allLogs: any[] = [];
+      let from = latest > BigInt(200_000) ? latest - BigInt(200_000) : BigInt(0);
+      let emptyChunks = 0;
+
+      while (from <= latest) {
+        const to = from + CHUNK - BigInt(1) > latest ? latest : from + CHUNK - BigInt(1);
+        try {
+          const logs = await client.getLogs({
+            address: FACTORY_ADDRESS,
+            event: {
+              type: "event",
+              name: "DuelCreated",
+              inputs: [
+                { name: "clone", type: "address", indexed: true },
+                { name: "playerA", type: "address", indexed: true },
+                { name: "stakeAmount", type: "uint256", indexed: false },
+                { name: "marketAddress", type: "address", indexed: false },
+                { name: "joinDeadline", type: "uint256", indexed: false },
+              ],
+            },
+            fromBlock: from,
+            toBlock: to,
+          });
+          allLogs.push(...logs);
+          emptyChunks = 0;
+        } catch {
+          emptyChunks++;
+          if (emptyChunks > 2) break;
+        }
+        from = to + BigInt(1);
+      }
 
       const results: OnChainDuel[] = [];
-
-      for (const log of logs) {
+      for (const log of allLogs) {
         const { clone, playerA, stakeAmount, marketAddress, joinDeadline } = log.args;
 
+        let eventState = 0;
+        let playerB: Address = "0x0000000000000000000000000000000000000000";
         try {
-          const state = await client.readContract({
-            address: clone!,
-            abi: WAGER_ABI,
-            functionName: "state",
-          });
-
-          let playerB: Address = "0x0000000000000000000000000000000000000000";
-          try {
-            const bAddr = await client.readContract({
+          const [stateResult, playerBResult] = await Promise.all([
+            client.readContract({
+              address: clone!,
+              abi: WAGER_ABI,
+              functionName: "state",
+            }),
+            client.readContract({
               address: clone!,
               abi: WAGER_ABI,
               functionName: "playerB",
-            });
-            if (bAddr !== "0x0000000000000000000000000000000000000000") {
-              playerB = bAddr as Address;
-            }
-          } catch {}
+            }),
+          ]);
+          eventState = Number(stateResult);
+          if (playerBResult !== "0x0000000000000000000000000000000000000000") {
+            playerB = playerBResult as Address;
+          }
+        } catch {}
 
-          results.push({
-            address: clone!,
-            playerA: playerA!,
-            playerB,
-            stakeAmount: formatEther(stakeAmount!),
-            marketAddress: marketAddress!,
-            joinDeadline: Number(joinDeadline),
-            state: Number(state),
-          });
-        } catch (e) {
-          results.push({
-            address: clone!,
-            playerA: playerA!,
-            playerB: "0x0000000000000000000000000000000000000000",
-            stakeAmount: formatEther(stakeAmount!),
-            marketAddress: marketAddress!,
-            joinDeadline: Number(joinDeadline),
-            state: 0,
-          });
-        }
+        results.push({
+          address: clone!,
+          playerA: playerA!,
+          playerB,
+          stakeAmount: formatEther(stakeAmount!),
+          marketAddress: marketAddress!,
+          joinDeadline: Number(joinDeadline),
+          state: eventState,
+        });
       }
 
       setDuels(results.reverse());

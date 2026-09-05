@@ -23,7 +23,7 @@ This document proves that Gambit's **reactive auto-settlement** works end-to-end
 |--------|-------|
 | Market address | `0x290ff8b2f6ced3b0d69f254d588239250d187933` |
 | Clone address | `0x80b0d6ffdb633a5a1d59c4cf2dc9e6e9338711e7` |
-| Factory (v6) | `0x9e66dD3D9C75825bbe2f2D5B494cE89E08828a06` |
+| Factory (v7) | `0xf96913baFdb849c3c9d765879247F3EC9D3749cF` |
 | Market expiry | `1788328800` |
 | `settlementTriggeredAt` | `1788328802` |
 | **Latency** | **2 seconds** |
