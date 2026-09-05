@@ -42,4 +42,4 @@ export function useMarketSentiment(marketAddress: Address | undefined) {
   return { sentiment, isLoading };
 }
 
-const SCALE = 1_000_000;
+const SCALE = 10 ** 18;
