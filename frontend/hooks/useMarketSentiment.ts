@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { Address } from "viem";
 import { subscribeOrderBook, type WsProbabilityUpdate } from "@/lib/dreamdex-ws";
 import type { MarketSentiment } from "@/lib/orderbook";
@@ -17,9 +17,11 @@ export function useMarketSentiment(marketAddress: Address | undefined) {
       return;
     }
 
+    // Reset loading state when market changes
     if (marketAddress !== prevAddress.current) {
       prevAddress.current = marketAddress;
       setIsLoading(true);
+      setSentiment(null);
     }
 
     const unsub = subscribeOrderBook(marketAddress, (update: WsProbabilityUpdate) => {
@@ -29,7 +31,7 @@ export function useMarketSentiment(marketAddress: Address | undefined) {
         totalBidDepth: 0,
         totalAskDepth: 0,
         midPrice: update.midPrice,
-        spread: (update.bestAsk - update.bestBid) / 1_000_000,
+        spread: (update.bestAsk - update.bestBid) / SCALE,
       });
       setIsLoading(false);
     });
@@ -39,3 +41,5 @@ export function useMarketSentiment(marketAddress: Address | undefined) {
 
   return { sentiment, isLoading };
 }
+
+const SCALE = 1_000_000;

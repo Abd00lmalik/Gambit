@@ -1,305 +1,151 @@
-import { type Address, createPublicClient, http, parseAbi } from "viem";
-import { somnia } from "./config";
+import { type Address } from "viem";
 
-const GRAPHQL_URL = "https://dev.smk.somnia.host/v1/graphql";
-const PRICE_FEED_URL = "https://price-feed.dev.oracle.somnia.host/v1/graphql";
+const DEV_GRAPHQL_URL = "https://dev.smk.somnia.host/v1/graphql";
+const PROD_GRAPHQL_URL = "https://prd.smk.somnia.host/v1/graphql";
 
-const BINARY_MODULE_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as Address;
-
-const BINARY_MODULE_ABI = parseAbi([
-  "function markets(bytes32 marketId) view returns (uint256 oracleQuestionId, uint8 outcomeSlotCount, uint8 voidPolicy, address collateral, uint32 originOperatorId, bytes32 originVenueId, address oracleAdapter, address creator, address market, address pool, uint256 yesId, uint256 noId, uint64 tradingStart, uint64 expiry)",
-]);
-
-// In-memory cache for opening prices per market address
-const openingPriceCache = new Map<string, number | null>();
-
-/**
- * Fetch opening price from DreamDEX price feed API.
- * DreamDEX's frontend uses: fetchPriceCandles(asset, "M1", {from: tradingStart, limit: 1440})
- * The first candle's `open` value is the opening price.
- * Candle id format: "BTC/USDT-M1-{timestamp}"
- */
-async function fetchOpeningPriceFromFeed(
-  asset: string,
-  tradingStart: number
-): Promise<number | null> {
+// ── Shared GraphQL helper ──────────────────────────────────────
+async function gqlFetch(url: string, query: string): Promise<any[]> {
   try {
-    // Query for the candle at the exact tradingStart timestamp
-    const candleId = `${asset}/USDT-M1-${tradingStart}`;
-    const query = `{
-      Candle(limit: 1, where: {id: {_eq: "${candleId}"}}) { id }
-    }`;
-    const res = await fetch(PRICE_FEED_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query }),
     });
     const data = await res.json();
-    const candle = data?.data?.Candle?.[0];
-    if (!candle) {
-      // Try a few minutes before tradingStart (price feed may have gaps)
-      for (let offset = 60; offset <= 300; offset += 60) {
-        const altId = `${asset}/USDT-M1-${tradingStart - offset}`;
-        const altRes = await fetch(PRICE_FEED_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: `{ Candle(limit: 1, where: {id: {_eq: "${altId}"}}) { id } }` }),
-        });
-        const altData = await altRes.json();
-        if (altData?.data?.Candle?.length > 0) {
-          // Found a candle — but we can't get open/close from just the id
-          // The price feed API returns empty fields for non-JSON columns
-          // Fall through to CoinGecko
-          break;
-        }
-      }
-    }
-    // Price feed API fields (o,h,l,c) return null in Hasura — the data is stored
-    // in the id string only. We cannot extract open price from it.
-    // Fall through to CoinGecko.
-    return null;
+    return data?.data?.Market ?? [];
   } catch {
-    return null;
+    return [];
   }
 }
 
-/**
- * Fetch current BTC/ETH prices from CoinGecko.
- * Used as fallback when price feed is unavailable.
- */
-async function fetchCoinGeckoPrices(): Promise<Record<string, number>> {
+async function gqlRaw(url: string, query: string): Promise<any> {
   try {
-    const res = await fetch(
-      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd"
-    );
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
     const data = await res.json();
-    const result: Record<string, number> = {};
-    if (data.bitcoin?.usd) result.BTC = data.bitcoin.usd;
-    if (data.ethereum?.usd) result.ETH = data.ethereum.usd;
-    return result;
+    return data?.data ?? {};
   } catch {
     return {};
   }
 }
 
+// ── Opening price resolution ───────────────────────────────────
+// Primary source: DreamDEX prod price feed (exact match)
+const PRICE_FEED_URL = "https://price-feed.prd.oracle.somnia.host/v1/graphql";
+
+// Cache: key = "asset|tradingStart", value = price
+const openingPriceCache = new Map<string, number | null>();
+
+// Fallback: CoinGecko (used only if price feed has no data)
+let geckoCache: { prices: Record<string, number>; ts: number } = { prices: {}, ts: 0 };
+const GECKO_CACHE_MS = 10_000;
+
+async function fetchCoinGeckoPrices(): Promise<Record<string, number>> {
+  const now = Date.now();
+  if (geckoCache.prices.BTC && now - geckoCache.ts < GECKO_CACHE_MS) {
+    return geckoCache.prices;
+  }
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd"
+    );
+    const data = await res.json();
+    const prices: Record<string, number> = {};
+    if (data.bitcoin?.usd) prices.BTC = data.bitcoin.usd;
+    if (data.ethereum?.usd) prices.ETH = data.ethereum.usd;
+    geckoCache = { prices, ts: now };
+    return prices;
+  } catch {
+    return geckoCache.prices;
+  }
+}
+
 /**
- * Resolve the opening price for a market.
- * Priority: cache → price feed API → CoinGecko → null
- * The opening price is the asset price at the market's tradingStart time.
- * For testnet, the price feed is stale so we use CoinGecko as proxy.
+ * Get opening price from DreamDEX's prod price feed.
+ * Queries PricePoint table for the BTC/USDC or ETH/USDC spot price
+ * at or just after the market's tradingStart timestamp.
  */
-async function resolveOpeningPrice(
-  marketAddress: string,
+async function fetchPriceFeedOpeningPrice(
   asset: string,
   tradingStart: number
 ): Promise<number | null> {
-  // Check cache first
-  if (openingPriceCache.has(marketAddress)) {
-    return openingPriceCache.get(marketAddress)!;
+  if (tradingStart <= 0) return null;
+
+  const feedId = `${asset}/USDC`;
+  const cacheKey = `${asset}|${tradingStart}`;
+
+  if (openingPriceCache.has(cacheKey)) {
+    return openingPriceCache.get(cacheKey)!;
   }
 
-  // Try price feed API
-  const feedPrice = await fetchOpeningPriceFromFeed(asset, tradingStart);
-  if (feedPrice !== null && feedPrice > 0) {
-    openingPriceCache.set(marketAddress, feedPrice);
-    return feedPrice;
+  try {
+    // Get the first price at or after tradingStart (the opening candle)
+    const query = `{
+      PricePoint(
+        limit: 1,
+        order_by: {blockTimestamp: asc},
+        where: {feed_id: {_eq: "${feedId}"}, blockTimestamp: {_gte: ${tradingStart}}}
+      ) { spot blockTimestamp }
+    }`;
+    const data = await gqlRaw(PRICE_FEED_URL, query);
+    const pp = data.PricePoint?.[0];
+    if (pp?.spot) {
+      const price = Number(pp.spot) / 10 ** 18;
+      if (price > 0) {
+        openingPriceCache.set(cacheKey, price);
+        return price;
+      }
+    }
+  } catch {
+    // fall through to CoinGecko
   }
 
-  // CoinGecko fallback — current price as proxy for opening price
-  // This is accurate when the page loads near tradingStart
-  const geckoPrices = await fetchCoinGeckoPrices();
-  const geckoPrice = geckoPrices[asset];
-  if (geckoPrice && geckoPrice > 0) {
-    openingPriceCache.set(marketAddress, geckoPrice);
-    return geckoPrice;
+  // If market hasn't started yet, get the latest price as proxy
+  try {
+    const query = `{
+      PricePoint(
+        limit: 1,
+        order_by: {blockTimestamp: desc},
+        where: {feed_id: {_eq: "${feedId}"}}
+      ) { spot }
+    }`;
+    const data = await gqlRaw(PRICE_FEED_URL, query);
+    const pp = data.PricePoint?.[0];
+    if (pp?.spot) {
+      const price = Number(pp.spot) / 10 ** 18;
+      if (price > 0) {
+        openingPriceCache.set(cacheKey, price);
+        return price;
+      }
+    }
+  } catch {
+    // fall through
   }
 
   return null;
 }
 
-export interface MarketVerification {
-  valid: boolean;
-  marketId?: string;
-  expiry?: number;
-  status?: number;
-  clobStatus?: string;
-  error?: string;
-}
-
-/**
- * Verify a market address is a legitimate DreamDEX BinaryMarket.
- * Two-layer check:
- * 1. Off-chain indexer: does this address exist in DreamDEX's indexer?
- * 2. On-chain: does BinaryMarketsModule.markets(marketId) confirm this address?
- */
-export async function verifyMarketAddress(
-  marketAddress: Address
-): Promise<MarketVerification> {
-  // Layer 1: Indexer check
-  const query = `{
-    Market(
-      where: {marketAddress: {_eq: "${marketAddress.toLowerCase()}"}},
-      limit: 1
-    ) {
-      id
-      marketId
-      marketAddress
-      clobStatus
-      expiry
-    }
-  }`;
-
-  try {
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const data = await res.json();
-    const markets = data?.data?.Market ?? [];
-
-    if (markets.length === 0) {
-      return { valid: false, error: "Market not found in DreamDEX indexer" };
-    }
-
-    const market = markets[0];
-    const marketId = market.marketId;
-
-    if (!marketId) {
-      return { valid: false, error: "Market has no marketId in indexer" };
-    }
-
-    // Check market is actually tradeable (not Locked or beyond)
-    if (market.clobStatus !== "Trading") {
-      return {
-        valid: false,
-        marketId,
-        clobStatus: market.clobStatus,
-        error: `Market is not tradeable (status: ${market.clobStatus}). It may be locked or expired.`,
-      };
-    }
-
-    // Layer 2: On-chain verification
-    const client = createPublicClient({
-      chain: somnia,
-      transport: http(),
-    });
-
-    try {
-      const record = await client.readContract({
-        address: BINARY_MODULE_ADDRESS,
-        abi: BINARY_MODULE_ABI,
-        functionName: "markets",
-        args: [marketId as `0x${string}`],
-      });
-
-      const onChainMarket = record[8]; // market address field
-
-      if (
-        !onChainMarket ||
-        onChainMarket.toLowerCase() !== marketAddress.toLowerCase()
-      ) {
-        return {
-          valid: false,
-          marketId,
-          error: "On-chain market address mismatch — possible fake market",
-        };
-      }
-
-      const onChainExpiry = Number(record[13]);
-      const now = Math.floor(Date.now() / 1000);
-      if (onChainExpiry <= now) {
-        return {
-          valid: false,
-          marketId,
-          expiry: onChainExpiry,
-          error: "Market has already expired",
-        };
-      }
-
-      return {
-        valid: true,
-        marketId,
-        expiry: onChainExpiry,
-        clobStatus: market.clobStatus,
-      };
-    } catch (e) {
-      // On-chain read failed — indexer check passed, but can't verify on-chain
-      // Allow with warning (indexer data is generally reliable)
-      console.warn("On-chain verification failed, indexer check passed:", e);
-      return {
-        valid: true,
-        marketId,
-        expiry: market.expiry,
-        error: undefined,
-      };
-    }
-  } catch (e) {
-    return { valid: false, error: "Failed to reach DreamDEX indexer" };
-  }
-}
-
-export interface DreamDexMarket {
-  id: string;
-  marketAddress: Address;
-  marketId: string;
-  asset: string;
-  question: string;
-  displayQuestion: string;
-  strike: number;
-  indexPrice: number;
-  openingPrice: number | null;
-  intervalSec: number;
-  expiry: number;
-  tradingStart: number;
-  clobStatus: string;
-  binaryPoolAddress: string;
-  venueId: string;
-  finalized: boolean;
-  voided: boolean;
-  oracleQuestionId: string;
-}
-
-/**
- * Parse the strike/opening price from a DreamDEX question string.
- * Question format: "Pricefeed test: will ETH/USDC's price be at or above 2447.32 at unix time ..."
- * Returns the numeric price or null if not parseable.
- */
 function parseStrikeFromQuestion(question: string): number | null {
   if (!question) return null;
-  // Match "at or above <number>" pattern
   const match = question.match(/at or above\s+([\d,]+\.?\d*)/i);
   if (match) {
     const val = parseFloat(match[1].replace(/,/g, ""));
     if (!isNaN(val) && val > 0) return val;
   }
-  // Fallback: match any dollar-style number after "above"
-  const match2 = question.match(/above\s+\$?([\d,]+\.?\d*)/i);
-  if (match2) {
-    const val = parseFloat(match2[1].replace(/,/g, ""));
-    if (!isNaN(val) && val > 0) return val;
-  }
   return null;
 }
 
-/**
- * Compute the opening price for a DreamDEX market from available data.
- * Priority: strike field → question text → null (caller should use live price).
- */
 function deriveOpeningPrice(strike: number, question: string): number | null {
   if (strike > 0) {
-    // strike is in micro-dollars when > 100000 (e.g. 7919999 → $79,199.99)
     return strike > 100000 ? strike / 100 : strike;
   }
-  const fromQuestion = parseStrikeFromQuestion(question);
-  if (fromQuestion !== null) return fromQuestion;
-  return null;
+  return parseStrikeFromQuestion(question);
 }
 
-/**
- * Build the DreamDEX-style market question text.
- * DreamDEX format: "Will BTC settle above $79,670.28 at 08:00 UTC?"
- */
+// ── Build DreamDEX-style question ──────────────────────────────
 function buildMarketQuestion(
   asset: string,
   openingPrice: number | null,
@@ -317,78 +163,159 @@ function buildMarketQuestion(
   return `Will ${asset} close above its opening price at ${expiryTime} UTC?`;
 }
 
-export async function fetchActiveBinaryMarkets(
-  limit = 30
-): Promise<DreamDexMarket[]> {
-  const now = Math.floor(Date.now() / 1000);
+// ── Map raw GraphQL market to DreamDexMarket ───────────────────
+function mapMarketRaw(m: any): any {
+  const strikeVal = Number(m.strike) || 0;
+  const expiry = Number(m.expiry);
+  const tradingStart = Number(m.tradingStart || 0);
+  return {
+    id: m.id,
+    marketAddress: m.marketAddress as Address,
+    marketId: m.marketId || "",
+    asset: m.asset,
+    question: m.question,
+    displayQuestion: "",
+    strike: strikeVal,
+    indexPrice: Number(m.indexPrice) || 0,
+    openingPrice: deriveOpeningPrice(strikeVal, m.question),
+    intervalSec: Number(m.intervalSec),
+    expiry,
+    tradingStart,
+    clobStatus: m.clobStatus,
+    binaryPoolAddress: m.binaryPoolAddress || "",
+    venueId: m.venueId || "",
+    oracleQuestionId: m.oracleQuestionId || "",
+  };
+}
+
+async function enrichMarketWithPrice(raw: any): Promise<DreamDexMarket> {
+  const m = { ...raw };
+
+  // Try price feed first (exact DreamDEX-native price)
+  if (m.openingPrice === null || m.openingPrice === 0) {
+    const feedPrice = await fetchPriceFeedOpeningPrice(m.asset, m.tradingStart);
+    if (feedPrice !== null) {
+      m.openingPrice = feedPrice;
+    }
+  }
+
+  // Build display question with the resolved opening price
+  m.displayQuestion = buildMarketQuestion(m.asset, m.openingPrice, m.expiry);
+
+  return m as DreamDexMarket;
+}
+
+// ── Query both indexers and merge ──────────────────────────────
+async function queryBothIndexers(whereClause: string, orderBy: string, limit: number): Promise<any[]> {
   const query = `{
     Market(
-      where: {marketType: {_eq: "BINARY"}, finalized: {_eq: false}, voided: {_eq: false}, expiry: {_gt: ${now}}}
-      order_by: {expiry: asc}
+      where: {${whereClause}}
+      order_by: {${orderBy}}
       limit: ${limit}
     ) {
-      id
-      marketAddress
-      marketId
-      asset
-      question
-      strike
-      indexPrice
-      intervalSec
-      expiry
-      tradingStart
-      clobStatus
-      binaryPoolAddress
-      venueId
-      finalized
-      voided
-      oracleQuestionId
+      id marketAddress marketId asset question strike indexPrice
+      intervalSec expiry tradingStart clobStatus binaryPoolAddress venueId oracleQuestionId
     }
   }`;
 
-  try {
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const data = await res.json();
-    const markets = data?.data?.Market ?? [];
+  const [devMarkets, prodMarkets] = await Promise.all([
+    gqlFetch(DEV_GRAPHQL_URL, query),
+    gqlFetch(PROD_GRAPHQL_URL, query),
+  ]);
 
-    const mapped = markets
-      .filter((m: any) => m.marketAddress && m.clobStatus === "Trading")
-      .map((m: any) => {
-        const strikeVal = Number(m.strike);
-        const expiry = Number(m.expiry);
-        const tradingStart = Number(m.tradingStart);
-        const openingPrice = deriveOpeningPrice(strikeVal, m.question);
-        return {
-          id: m.id,
-          marketAddress: m.marketAddress as Address,
-          marketId: m.marketId,
-          asset: m.asset,
-          question: m.question,
-          displayQuestion: buildMarketQuestion(m.asset, openingPrice, expiry),
-          strike: strikeVal,
-          indexPrice: Number(m.indexPrice) || 0,
-          openingPrice,
-          intervalSec: Number(m.intervalSec),
-          expiry,
-          tradingStart,
-          clobStatus: m.clobStatus,
-          binaryPoolAddress: m.binaryPoolAddress,
-          venueId: m.venueId,
-          finalized: m.finalized,
-          voided: m.voided,
-          oracleQuestionId: m.oracleQuestionId || "",
-        };
-      });
+  const seenAddrs = new Set<string>();
+  const seenAssetIv = new Set<string>();
+  const merged: any[] = [];
 
-    return mapped;
-  } catch (e) {
-    console.error("Failed to fetch DreamDEX markets:", e);
-    return [];
+  for (const m of prodMarkets) {
+    const addr = m.marketAddress?.toLowerCase();
+    if (!addr || seenAddrs.has(addr)) continue;
+    seenAddrs.add(addr);
+    seenAssetIv.add(`${m.asset}-${m.intervalSec}`);
+    merged.push(m);
   }
+
+  for (const m of devMarkets) {
+    const addr = m.marketAddress?.toLowerCase();
+    const combo = `${m.asset}-${m.intervalSec}`;
+    if (!addr || seenAddrs.has(addr) || seenAssetIv.has(combo)) continue;
+    seenAddrs.add(addr);
+    merged.push(m);
+  }
+
+  return merged;
+}
+
+// ── Market verification ────────────────────────────────────────
+export interface MarketVerification {
+  valid: boolean;
+  marketId?: string;
+  expiry?: number;
+  clobStatus?: string;
+  error?: string;
+}
+
+export async function verifyMarketAddress(
+  marketAddress: Address
+): Promise<MarketVerification> {
+  const query = `{
+    Market(
+      where: {marketAddress: {_eq: "${marketAddress.toLowerCase()}"}},
+      limit: 1
+    ) {
+      id marketId marketAddress clobStatus expiry
+    }
+  }`;
+
+  for (const url of [PROD_GRAPHQL_URL, DEV_GRAPHQL_URL]) {
+    try {
+      const data = await gqlRaw(url, query);
+      const markets = data.Market ?? [];
+      if (markets.length === 0) continue;
+
+      const market = markets[0];
+      const marketId = market.marketId;
+      if (!marketId) return { valid: false, error: "Market has no marketId in indexer" };
+      if (market.clobStatus !== "Trading") {
+        return { valid: false, marketId, clobStatus: market.clobStatus, error: `Market is not tradeable (status: ${market.clobStatus})` };
+      }
+      return { valid: true, marketId, expiry: market.expiry, clobStatus: market.clobStatus };
+    } catch { continue; }
+  }
+  return { valid: false, error: "Market not found in any DreamDEX indexer" };
+}
+
+// ── DreamDexMarket type ────────────────────────────────────────
+export interface DreamDexMarket {
+  id: string;
+  marketAddress: Address;
+  marketId: string;
+  asset: string;
+  question: string;
+  displayQuestion: string;
+  strike: number;
+  indexPrice: number;
+  openingPrice: number | null;
+  intervalSec: number;
+  expiry: number;
+  tradingStart: number;
+  clobStatus: string;
+  binaryPoolAddress: string;
+  venueId: string;
+  oracleQuestionId: string;
+}
+
+// ── Fetch markets ──────────────────────────────────────────────
+export async function fetchActiveBinaryMarkets(limit = 30): Promise<DreamDexMarket[]> {
+  const now = Math.floor(Date.now() / 1000);
+  const markets = await queryBothIndexers(
+    `marketType: {_eq: "BINARY"}, clobStatus: {_eq: "Trading"}, expiry: {_gt: ${now}}`,
+    `expiry: asc`,
+    limit
+  );
+
+  const filtered = markets.filter((m: any) => m.marketAddress).map(mapMarketRaw);
+  return Promise.all(filtered.map(enrichMarketWithPrice));
 }
 
 export async function fetchMarketsByInterval(
@@ -397,160 +324,53 @@ export async function fetchMarketsByInterval(
   limit = 5
 ): Promise<DreamDexMarket[]> {
   const now = Math.floor(Date.now() / 1000);
-  // Server-side filter: only non-expired markets, nearest expiry first
-  const query = `{
-    Market(
-      where: {
-        marketType: {_eq: "BINARY"},
-        finalized: {_eq: false},
-        voided: {_eq: false},
-        asset: {_eq: "${asset}"},
-        intervalSec: {_eq: ${intervalSec}},
-        expiry: {_gt: ${now}}
-      }
-      order_by: {expiry: asc}
-      limit: ${limit}
-    ) {
-      id marketAddress marketId asset question strike indexPrice
-      intervalSec expiry tradingStart clobStatus binaryPoolAddress venueId
-      finalized voided oracleQuestionId
-    }
-  }`;
+  const markets = await queryBothIndexers(
+    `marketType: {_eq: "BINARY"}, clobStatus: {_eq: "Trading"}, asset: {_eq: "${asset}"}, intervalSec: {_eq: ${intervalSec}}, expiry: {_gt: ${now}}`,
+    `expiry: asc`,
+    limit
+  );
 
-  let markets: any[] = [];
-
-  try {
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const data = await res.json();
-    markets = data?.data?.Market ?? [];
-  } catch (e) {
-    console.warn("DreamDEX query failed:", e);
-    return [];
-  }
-
-  // GraphQL already filters non-expired; just ensure has address
-  const active = markets.filter((m: any) => m.marketAddress);
-
-  const mapped = active
+  const filtered = markets
+    .filter((m: any) => m.marketAddress)
     .slice(0, limit)
-    .map((m: any) => {
-      const strikeVal = Number(m.strike);
-      const expiry = Number(m.expiry);
-      const tradingStart = Number(m.tradingStart);
-      const openingPrice = deriveOpeningPrice(strikeVal, m.question);
-      return {
-        id: m.id,
-        marketAddress: m.marketAddress as Address,
-        marketId: m.marketId,
-        asset: m.asset,
-        question: m.question,
-        displayQuestion: buildMarketQuestion(m.asset, openingPrice, expiry),
-        strike: strikeVal,
-        indexPrice: Number(m.indexPrice) || 0,
-        openingPrice,
-        intervalSec: Number(m.intervalSec),
-        expiry,
-        tradingStart,
-        clobStatus: m.clobStatus,
-        binaryPoolAddress: m.binaryPoolAddress,
-        venueId: m.venueId,
-        finalized: m.finalized,
-        voided: m.voided,
-        oracleQuestionId: m.oracleQuestionId || "",
-      };
-    });
-
-  return mapped;
+    .map(mapMarketRaw);
+  return Promise.all(filtered.map(enrichMarketWithPrice));
 }
 
-export async function fetchLatestIndexPrices(): Promise<
-  Record<string, number>
-> {
-  const now = Math.floor(Date.now() / 1000);
-  // Fetch active markets across all intervals to maximize price coverage
-  const query = `{
-    Market(
-      where: {
-        marketType: {_eq: "BINARY"},
-        finalized: {_eq: false},
-        voided: {_eq: false},
-        expiry: {_gt: ${now}}
+export async function fetchLatestIndexPrices(): Promise<Record<string, number>> {
+  const result: Record<string, number> = {};
+
+  // Get latest prices from the prod price feed (real-time, exact)
+  for (const asset of ["BTC", "ETH"]) {
+    try {
+      const query = `{
+        PricePoint(
+          limit: 1,
+          order_by: {blockTimestamp: desc},
+          where: {feed_id: {_eq: "${asset}/USDC"}}
+        ) { spot }
+      }`;
+      const data = await gqlRaw(PRICE_FEED_URL, query);
+      const pp = data.PricePoint?.[0];
+      if (pp?.spot) {
+        result[asset] = Number(pp.spot) / 10 ** 18;
       }
-      order_by: {expiry: asc}
-      limit: 20
-    ) {
-      asset
-      strike
-      indexPrice
-      expiry
-      question
-    }
-  }`;
-
-  try {
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const data = await res.json();
-    const markets = data?.data?.Market ?? [];
-
-    const bestPrices: Record<string, { price: number; expiry: number }> = {};
-
-    for (const m of markets) {
-      const asset = m.asset;
-      if (asset !== "BTC" && asset !== "ETH") continue;
-
-      const indexPrice = Number(m.indexPrice);
-      const strike = Number(m.strike);
-      const questionPrice = parseStrikeFromQuestion(m.question);
-
-      let price = 0;
-      if (indexPrice > 0) {
-        price = indexPrice;
-      } else if (strike > 0) {
-        price = strike > 100000 ? strike / 100 : strike;
-      } else if (questionPrice !== null) {
-        price = questionPrice;
-      }
-      if (price <= 0) continue;
-
-      const expiry = Number(m.expiry);
-      if (!bestPrices[asset] || expiry > bestPrices[asset].expiry) {
-        bestPrices[asset] = { price, expiry };
-      }
-    }
-
-    const result: Record<string, number> = {};
-    for (const [asset, data] of Object.entries(bestPrices)) {
-      result[asset] = data.price;
-    }
-
-    // CoinGecko fallback only if DreamDEX didn't return prices
-    if (!result.BTC || !result.ETH) {
-      try {
-        const geckoRes = await fetch(
-          "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd"
-        );
-        const geckoData = await geckoRes.json();
-        if (!result.BTC && geckoData.bitcoin?.usd) result.BTC = geckoData.bitcoin.usd;
-        if (!result.ETH && geckoData.ethereum?.usd) result.ETH = geckoData.ethereum.usd;
-      } catch {}
-    }
-
-    return result;
-  } catch (e) {
-    console.error("Failed to fetch index prices:", e);
-    return {};
+    } catch {}
   }
+
+  // CoinGecko fallback
+  if (!result.BTC || !result.ETH) {
+    const gecko = await fetchCoinGeckoPrices();
+    if (!result.BTC && gecko.BTC) result.BTC = gecko.BTC;
+    if (!result.ETH && gecko.ETH) result.ETH = gecko.ETH;
+  }
+
+  return result;
 }
 
+// ── Utilities ──────────────────────────────────────────────────
 export function intervalFromSec(sec: number): string {
+  if (sec <= 60) return "60s";
   if (sec <= 300) return "5m";
   if (sec <= 900) return "15m";
   if (sec <= 3600) return "1h";
@@ -559,98 +379,30 @@ export function intervalFromSec(sec: number): string {
   return `${Math.round(sec / 60)}m`;
 }
 
-export async function fetchOracleQuestionId(
-  marketAddress: Address
-): Promise<string | null> {
-  const query = `{
-    Market(where: {marketAddress: {_eq: "${marketAddress}"}}, limit: 1) {
-      oracleQuestionId
-    }
-  }`;
-
-  try {
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const data = await res.json();
-    return data?.data?.Market?.[0]?.oracleQuestionId ?? null;
-  } catch (e) {
-    console.error("Failed to fetch oracleQuestionId:", e);
-    return null;
+export async function fetchOracleQuestionId(marketAddress: Address): Promise<string | null> {
+  for (const url of [PROD_GRAPHQL_URL, DEV_GRAPHQL_URL]) {
+    const data = await gqlRaw(url, `{
+      Market(where: {marketAddress: {_eq: "${marketAddress}"}}, limit: 1) {
+        oracleQuestionId
+      }
+    }`);
+    const qid = data?.Market?.[0]?.oracleQuestionId;
+    if (qid) return qid;
   }
+  return null;
 }
 
-export async function fetchOpeningPrices(
-  marketIds: string[]
-): Promise<Record<string, number | null>> {
+export async function fetchOpeningPrices(marketIds: string[]): Promise<Record<string, number | null>> {
   const result: Record<string, number | null> = {};
   if (marketIds.length === 0) return result;
-
-  const ids = marketIds.map((id) => id.toLowerCase());
-
-  try {
-    // Step 1: Get reference question IDs from MarketReferenceLink
-    const refQuery = `query OpeningRefs($ids: [String!]) {
-      MarketReferenceLink(where: {market_id: {_in: $ids}}) {
-        market: market_id
-        referenceQuestionId
-      }
-    }`;
-    const refRes = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: refQuery, variables: { ids } }),
-    });
-    const refData = await refRes.json();
-    const links = refData?.data?.MarketReferenceLink ?? [];
-
-    if (links.length === 0) return result;
-
-    // Map market → reference question ID
-    const marketToQid = new Map<string, string>();
-    const qids = new Set<string>();
-    for (const l of links) {
-      const mid = l.market.toLowerCase();
-      const qid = String(l.referenceQuestionId);
-      marketToQid.set(mid, qid);
-      qids.add(qid);
-    }
-
-    // Step 2: Get oracle answers for those question IDs
-    const ansQuery = `query OracleAnswersByQid($qids: [String!]) {
-      OracleAnswer(where: {id: {_in: $qids}}) { id numericValue }
-    }`;
-    const ansRes = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: ansQuery, variables: { qids: [...qids] } }),
-    });
-    const ansData = await ansRes.json();
-    const answers = ansData?.data?.OracleAnswer ?? [];
-
-    // Map question ID → numeric value
-    const qToVal = new Map<string, number>();
-    for (const a of answers) {
-      qToVal.set(String(a.id), Number(a.numericValue));
-    }
-
-    // Step 3: Join market → opening price (divide by 100 for 2-decimal scale)
-    for (const [market, qid] of marketToQid) {
-      const raw = qToVal.get(qid);
-      result[market] = raw != null ? raw / 100 : null;
-    }
-  } catch (e) {
-    console.error("Failed to fetch opening prices:", e);
+  const gecko = await fetchCoinGeckoPrices();
+  for (const id of marketIds) {
+    result[id] = gecko.BTC || gecko.ETH || null;
   }
-
   return result;
 }
 
-export function getTimeRemainingForInterval(
-  intervalSec: number
-): { secondsLeft: number; nextBoundary: number } {
+export function getTimeRemainingForInterval(intervalSec: number): { secondsLeft: number; nextBoundary: number } {
   const now = Math.floor(Date.now() / 1000);
   const boundary = Math.ceil(now / intervalSec) * intervalSec;
   return { secondsLeft: boundary - now, nextBoundary: boundary };
@@ -663,54 +415,31 @@ export interface MarketCombo {
   marketCount: number;
 }
 
-/**
- * Discover available asset/interval combinations from DreamDEX's live markets.
- * Returns the distinct combos currently tradeable on DreamDEX.
- */
 export async function fetchAvailableMarkets(): Promise<MarketCombo[]> {
-  const query = `{
-    Market(
-      where: {marketType: {_eq: "BINARY"}, finalized: {_eq: false}, voided: {_eq: false}, clobStatus: {_eq: "Trading"}}
-      order_by: {createdAtTimestamp: desc}
-      limit: 100
-    ) {
-      asset
-      intervalSec
+  const now = Math.floor(Date.now() / 1000);
+  const markets = await queryBothIndexers(
+    `marketType: {_eq: "BINARY"}, clobStatus: {_eq: "Trading"}, expiry: {_gt: ${now}}`,
+    `expiry: asc`,
+    100
+  );
+
+  const comboMap = new Map<string, MarketCombo>();
+  for (const m of markets) {
+    const key = `${m.asset}-${m.intervalSec}`;
+    if (comboMap.has(key)) {
+      comboMap.get(key)!.marketCount++;
+    } else {
+      comboMap.set(key, {
+        asset: m.asset,
+        intervalSec: m.intervalSec,
+        label: intervalFromSec(m.intervalSec),
+        marketCount: 1,
+      });
     }
-  }`;
-
-  try {
-    const res = await fetch(GRAPHQL_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
-    });
-    const data = await res.json();
-    const markets = data?.data?.Market ?? [];
-
-    // Group by asset + intervalSec
-    const comboMap = new Map<string, MarketCombo>();
-    for (const m of markets) {
-      const key = `${m.asset}-${m.intervalSec}`;
-      if (comboMap.has(key)) {
-        comboMap.get(key)!.marketCount++;
-      } else {
-        comboMap.set(key, {
-          asset: m.asset,
-          intervalSec: m.intervalSec,
-          label: intervalFromSec(m.intervalSec),
-          marketCount: 1,
-        });
-      }
-    }
-
-    return [...comboMap.values()].sort((a, b) => {
-      // Sort by asset name, then interval
-      if (a.asset !== b.asset) return a.asset.localeCompare(b.asset);
-      return a.intervalSec - b.intervalSec;
-    });
-  } catch (e) {
-    console.error("Failed to fetch available markets:", e);
-    return [];
   }
+
+  return [...comboMap.values()].sort((a, b) => {
+    if (a.asset !== b.asset) return a.asset.localeCompare(b.asset);
+    return a.intervalSec - b.intervalSec;
+  });
 }

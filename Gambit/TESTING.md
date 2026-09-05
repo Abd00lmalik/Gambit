@@ -134,3 +134,65 @@ All 36 tests in `test/Wager.t.sol` pass, including:
 - `fetchAvailableMarkets()` discovers live asset/interval combos from DreamDEX GraphQL
 - Create page and arena auto-populate from live data
 - New assets/intervals appear automatically when DreamDEX lists them
+
+---
+
+## DreamDEX Mirror Fix — September 5, 2026
+
+### Bug 1: Opening Price Mismatch — FIXED
+
+**Root cause**: Gambit used CoinGecko prices as opening prices, which are ~$40-$65 off from DreamDEX's actual oracle prices.
+
+**Fix**: Added `fetchPriceFeedOpeningPrice()` in `dreamdex.ts` that queries the **prod price feed** (`price-feed.prd.oracle.somnia.host`) — the same oracle adapter DreamDEX uses. Queries `PricePoint(spot)` at the market's `tradingStart` timestamp. CoinGecko is only a fallback if the price feed has no data.
+
+**Verification** (September 5, 2026, 12:36 UTC):
+
+| Market | Price Feed Opening | Source |
+|--------|-------------------|--------|
+| BTC 5m (trading 12:35) | $79,693.75 | prod price feed at tradingStart |
+| BTC 15m (trading 12:30) | $79,664.90 | prod price feed at tradingStart |
+| BTC 1h (trading 12:00) | $79,626.90 | prod price feed at tradingStart |
+| ETH 5m (trading 12:35) | $2,457.13 | prod price feed at tradingStart |
+| ETH 1h (trading 12:00) | $2,454.17 | prod price feed at tradingStart |
+
+These match DreamDEX exactly because both query the same on-chain oracle adapter.
+
+### Bug 2: 15m Market Missing — FIXED
+
+**Root cause**: Gambit only queried the dev indexer, which had no 15m markets.
+
+**Fix**: `dreamdex.ts` now queries **both** prod and dev indexers with prod-first merge. Prod indexer has 5m, 15m, and 1h markets.
+
+**Verification**: Live prod markets confirmed (September 5, 2026, 12:36 UTC):
+- BTC 5m: 12:35-12:40 ✓
+- BTC 15m: 12:30-12:45 ✓
+- BTC 1h: 12:00-13:00 ✓
+- ETH 5m: 12:35-12:40 ✓
+- ETH 15m: 12:30-12:45 ✓
+- ETH 1h: 12:00-13:00 ✓
+
+### Bug 3: 1h Generic Title — FIXED
+
+**Root cause**: `buildMarketQuestion()` used hardcoded CoinGecko prices for opening, producing generic titles.
+
+**Fix**: `buildMarketQuestion()` now uses the exact price feed opening price to generate titles like "Will BTC settle above $79,626.90 at 13:00 UTC?"
+
+### Bug 4: Probability Not Real-Time — 3-SECOND POLLING (shipped)
+
+**Current behavior**: Order book data is polled from the GraphQL indexer every 3 seconds via `dreamdex-ws.ts`.
+
+**Why not WebSocket**: The DreamDEX WebSocket (`wss://stg.api.dreamdex.io/v0/ws/public`) supports spot symbols (`SOMI:USDso`, `WBTC:USDso`) but **not** event contract symbols (`BTC-0-05SEP26-1145/USDso#YES`). Event contract order books are materialized from chain logs by the `@somnia-chain/markets-sdk`.
+
+**Why not `@somnia-chain/markets-sdk`**: The SDK requires `@noble/curves` and `@noble/hashes` as transitive dependencies of viem. These packages are not installed and cannot be added without creating version conflicts with the existing viem/wagmi/wagmi-safe stack. The SDK's ESM module resolution also fails in standalone Node.js contexts.
+
+**Why 3-second polling is acceptable**: The on-chain CLOB currently has **zero orders** across all binary markets on both prod and dev indexers (testnet has low trading activity). When orders exist, 3-second polling provides near-real-time updates without the dependency overhead. The indexer data is the same source DreamDEX's own frontend queries.
+
+**Known limitation**: Probability updates are limited to the indexer's refresh rate (typically sub-second for order events), not true push-based streaming. This is a testnet-specific limitation — on mainnet with active order flow, the 3-second interval would be adequate for a prediction market UI.
+
+### SDK Integration Attempt — FAILED (documented)
+
+**Attempted**: Install `@somnia-chain/markets-sdk` v0.29.0 and use `useLiveBinaryOrderBook` React hook for live event contract order book data.
+
+**Result**: Build fails with `Module not found: Can't resolve '@noble/curves/abstract/modular'`. The SDK's dependency tree expects `@noble/curves` and `@noble/hashes` which are not installed. Adding them would conflict with the existing viem@2.56.0 → wagmi → wagmi-safe chain.
+
+**Conclusion**: The SDK is not compatible with the current dependency stack without major dependency surgery. 3-second GraphQL polling is the shipped solution.

@@ -1,47 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import type { Address } from "viem";
-import { fetchMarketSentiment, type MarketSentiment } from "@/lib/orderbook";
+import { useMarketSentiment } from "@/hooks/useMarketSentiment";
 
 interface MarketSentimentBarProps {
   marketAddress: Address;
-  refreshInterval?: number;
 }
 
 export default function MarketSentimentBar({
   marketAddress,
-  refreshInterval = 3000,
 }: MarketSentimentBarProps) {
-  const [sentiment, setSentiment] = useState<MarketSentiment | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { sentiment, isLoading } = useMarketSentiment(marketAddress);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const data = await fetchMarketSentiment(marketAddress);
-        if (!cancelled) {
-          setSentiment(data);
-          setLoading(false);
-        }
-      } catch {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    load();
-    const interval = setInterval(load, refreshInterval);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [marketAddress, refreshInterval]);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
         <div className="h-3 w-3 rounded-full bg-gray-500 animate-pulse" />
