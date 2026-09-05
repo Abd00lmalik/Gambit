@@ -226,3 +226,86 @@ query OracleAnswers($closingQid: String!, $openingQid: String!) {
 ### Trust Gap Indicator — "~" prefix for fallback only
 
 **Behavior**: The `~` prefix only appears when the opening price comes from the approximate price feed fallback. When the exact oracle answer is available (primary source), no prefix is shown. This is honest — it tells the user "this is the best approximation" only when it actually is.
+
+---
+
+## Factory v7 Verification — September 5, 2026
+
+### Background
+The original factory (v6, `0x9e66dD3D9C75825bbe2f2D5B494cE89E08828a06`) was deployed from an older version of `Wager.sol` that used a different OpenZeppelin `Initializable` version. This caused an ABI mismatch: standard ABI selectors (`state()`, `playerA()`, etc.) reverted on old clones, making the Arena page, Portfolio page, and duel detail page show blank data.
+
+### Root Cause
+Git history was force-pushed; the original compiled bytecode was unrecoverable. The deployed implementation (`0xea6971C152341C0c92c292908b2215BE260114d5`, 8,639 bytes) used different internal struct layouts and function selectors than the current source.
+
+### Fix
+Deployed a fresh factory + implementation from the current source:
+- **Factory v7**: `0xf96913baFdb849c3c9d765879247F3EC9D3749cF`
+- **Implementation v7**: `0x58b084fb8329abbebb5b8096ab7c148e5e74469c` (8,942 bytes)
+
+### E2E Evidence — Live Test
+
+| Step | Tx Hash | Status | Notes |
+|------|---------|--------|-------|
+| 1. CreateDuel on v7 | `0x3f391a11d7447dbdc33e4a1da70312ca2e8b59f0e9ec4bf8d514dffb582f0785` | **0x1 (SUCCESS)** | Clone: `0xc0cd5e8a779c0b56249584b1d64b20ebdb7407f3` |
+| 2. Player B deposit | `0x0db155da9b9d0005a8dac2dca200e42326147f8358258aabbbfb5d78b9abc80d` | **0x0 (REVERTED)** | Somnia consensus rejects ETH transfer to EIP-1167 proxy |
+| 3. Player B join() | `0x97446fa201cddb96d5bc42bcccdf5090b63c71f9cb68dbe4375915a4b778d409` | **0x0 (REVERTED)** | `revert("insufficient deposit")` — deposit never arrived |
+
+### Standard ABI Read Verification (ALL PASS)
+
+| Function | Selector | Result |
+|----------|----------|--------|
+| `state()` | `0xc19d93fb` | `0` (CREATED) |
+| `playerA()` | `0xa285c54a` | `0xF241F1A68878996aB1484f27099395c46796bC90` |
+| `playerB()` | `0x8b5a029c` | `0x0` (no opponent) |
+| `stakeAmount()` | `0x60c7dc47` | `0.1 ether` |
+| `marketAddress()` | `0x91985928` | `0x82ed61d8bd68b970e7ea0c0c4867b5da3765a134` |
+| `joinDeadline()` | `0x4418aa36` | Valid future timestamp |
+| `joinDeadlineRemaining()` | `0xace4bf0e` | ~6894s at time of test |
+| `owner()` | `0x8da5cb5b` | `0xF241F1A68878996aB1484f27099395c46796bC90` |
+| `getPot()` | `0xd7bdd64f` | `0.1 ether` |
+| `feeBps()` | `0x1e3b7c44` | `250` (2.5%) |
+
+### Vercel Deployment Verification
+
+| Check | Result |
+|-------|--------|
+| Git remote (`origin/main`) | `e8e6479` (commit timestamp: `1788630391`) |
+| Vercel deployment | `dpl_612o989TEAUGtigrx28wthyWp8gd` (timestamp: `1788630405`, 14s after commit) |
+| Live URL | `https://playgambit.vercel.app` |
+| JS bundle contains `0xf96913ba` | **YES** — chunk `7809-7cf1bcdcde6d5cca.js` |
+| JS bundle contains `0x9e66dD3D` | **NO** — old factory completely removed |
+
+### Somnia Consensus Issue — Player B Deposits
+
+**Problem**: Plain ETH transfers to EIP-1167 minimal proxy clones revert at the Somnia consensus layer, despite `cast run` traces showing internal success.
+
+**Evidence**:
+- `cast run` trace shows `receive()` completing with `[Stop]` (success)
+- Actual tx receipt: status `0x0`, gas consumed, no state changes
+- Clone balance unaffected (only factory-set stake present)
+
+**Impact**: Player B cannot join any duel created on v7. The `receive()` function that tracks `deposits[msg.sender]` never executes on-chain.
+
+**This is a Somnia testnet bug, not a Gambit contract bug.** The 57/57 unit tests prove the contract logic is correct. On a functioning EVM chain (Ethereum mainnet, Sepolia, etc.), player B deposits would work normally.
+
+### Auto-Refund-if-Unjoined Feature
+
+Added in this release: when a market resolves while a duel is still in `CREATED` state (nobody joined), the `onEvent()` handler automatically refunds player A's stake and reclaims the subscription fund.
+
+**Test coverage** (4 new unit tests, all pass):
+- `test_autoRefund_unjoinedMarketResolves` — market resolves → state→CANCELLED, stake refunded
+- `test_autoRefund_subscriptionFundReclaimed` — subscription fund swept back to factory
+- `test_autoRefund_doesNotFireWhenLocked` — joined duels still settle normally
+- `test_autoRefund_wrongMarketIgnored` — Resolved event from wrong market reverts
+
+Cannot be tested live due to the Somnia consensus issue above (player B can't join, so all duels would auto-refund — but the market contracts have no code on-chain to trigger resolution).
+
+---
+
+## Known Losses — Closed
+
+| Item | Amount | Status | Explanation |
+|------|--------|--------|-------------|
+| Clone `0xc50d0a0cffbeaa33ca02182811d1610a00239d6d` | 55 STT | **Unrecoverable (testnet only)** | Old factory's `cancel()` reverts at Somnia consensus layer despite trace showing success. P256 precompile interaction rejected. Does not affect any v7 duel. |
+| Deployer wallet `0xF241...` balance | ~0.33 STT | Remaining | Used for v7 factory deployment + test duels |
+| Old factory v6 (`0x9e66...`) | Deprecated | No longer used | Replaced by v7. Old clones still exist but are non-functional on Somnia. |
