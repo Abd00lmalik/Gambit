@@ -139,22 +139,43 @@ All 36 tests in `test/Wager.t.sol` pass, including:
 
 ## DreamDEX Mirror Fix — September 5, 2026
 
-### Bug 1: Opening Price Mismatch — FIXED (with documented limitation)
+### Bug 1: Opening Price Mismatch — FIXED (exact match via OracleAnswer)
 
 **Root cause**: Gambit used CoinGecko prices as opening prices, which were ~$40-$65 off from DreamDEX's actual oracle prices.
 
-**Fix**: Added `fetchPriceFeedOpeningPrice()` in `dreamdex.ts` that queries the **prod price feed** (`price-feed.prd.oracle.somnia.host`) — the same oracle adapter DreamDEX uses. Queries `PricePoint(spot)` at the market's `tradingStart` timestamp. CoinGecko is only a fallback if the price feed has no data.
+**Discovery**: Analyzed DreamDEX's frontend JS bundle (`2jj899rqpq7fm.js`) and found their exact opening price source:
+```graphql
+query OpeningRefs($ids: [String!]) {
+  MarketReferenceLink(where: {market_id: {_in: $ids}}) {
+    market: market_id
+    referenceQuestionId
+  }
+}
+query OracleAnswers($closingQid: String!, $openingQid: String!) {
+  opening: OracleAnswer_by_pk(id: $openingQid) {
+    oracleQuestionId
+    numericValue
+  }
+}
+```
+
+**Fix**: Added `fetchOracleOpeningPrice()` in `dreamdex.ts` that queries `MarketReferenceLink → OracleAnswer_by_pk(numericValue / 100)`. This gives the **exact** price DreamDEX displays. Falls back to price feed if oracle answer not available.
+
+**Priority order**:
+1. Oracle answer via `MarketReferenceLink → OracleAnswer` (exact, matches DreamDEX)
+2. Price feed via `PricePoint` (approximate, ~$0.03-$1.70 off)
+3. CoinGecko (fallback)
 
 **Verification** (September 5, 2026):
 
-| Market | Price Feed | DreamDEX | Gap |
-|--------|-----------|----------|-----|
-| BTC 1h | $63,579.12 | $63,579.17 | $0.05 |
-| BTC 15m | ~$63,572 | ~$63,579 | ~$7 |
+| Market | Oracle Answer (nv/100) | Price Feed | Gap |
+|--------|----------------------|------------|-----|
+| BTC 1h | $79,626.64 | $79,628.34 | $1.70 |
+| ETH 1h | $2,454.44 | $2,454.67 | $0.23 |
+| BTC 15m | $79,724.31 | $79,725.25 | $0.94 |
+| ETH 15m | $2,456.81 | $2,456.84 | $0.03 |
 
-**Remaining gap — documented limitation**: The ~$0.05–$7 gap exists because DreamDEX settles via the **Prophecy Oracle**, which uses a different price source/timing than the off-chain price feed's `spot` field. The oracle's exact reference price is not accessible through the off-chain feed.
-
-**Investigation exhausted**: Both prod and dev indexers are completely reset (all event tables: `OracleAnswer`, `OracleQuestion`, `Fill`, `MarketResolutionEvent` — 0 rows). The `MarketReferenceLink → OracleAnswer` path that previously matched DreamDEX exactly is dead. The oracle explorer (`prd.oracle.somnia.host`) has `SourceAnswer` data but uses a different `question_id` namespace than DreamDEX's `oracleQuestionId` — no mapping endpoint exists. On-chain oracle adapter calls return empty. This is a testnet infrastructure limitation, not a Gambit bug.
+**Trust indicator**: The `~` prefix only shows when using the approximate price feed fallback, not when the exact oracle answer is available.
 
 ### Bug 2: 15m Market Missing — FIXED
 
@@ -202,15 +223,6 @@ All 36 tests in `test/Wager.t.sol` pass, including:
 
 **Result**: No selector returns a price/strike/reference value. All returned values are either global (same for every questionId: `outcomeSlotCount=3`, `isResolved=false`, `version=2.0.0`) or addresses/hashes. The `payoutNumerators()` function gives the win/loss vector, not the price. The BinaryMarket contract does not expose the settlement reference price as a public view function.
 
-### Trust Gap Indicator — "~" prefix (shipped)
+### Trust Gap Indicator — "~" prefix for fallback only
 
-**Why**: The displayed opening price is sourced from the off-chain price feed, not the on-chain Prophecy Oracle which DreamDEX uses for settlement. The gap is $0.05–$7 depending on market volatility. Without the exact oracle price, showing a false-precision number could mislead users into judging outcomes against a slightly-off threshold.
-
-**Implementation**: Added `~` prefix to all opening price displays:
-- `buildMarketQuestion()` in `dreamdex.ts` — titles show "~$63,579.12" instead of "$63,579.12"
-- `create/page.tsx` SummaryRow — "~$63,579.12"
-- `pool/[address]/page.tsx` — "~$63,579.12"
-- `SquadPoolCard.tsx` — "~$63,579.12"
-- `SystemDuelCard.tsx` — "~$63,579.12"
-
-**Behavior**: The `~` prefix appears on every opening price since the BinaryMarket contract has no public view function exposing the exact settlement reference. This is honest, not alarming — it tells the user "this is the best approximation, the exact threshold is determined on-chain by DreamDEX's oracle."
+**Behavior**: The `~` prefix only appears when the opening price comes from the approximate price feed fallback. When the exact oracle answer is available (primary source), no prefix is shown. This is honest — it tells the user "this is the best approximation" only when it actually is.
