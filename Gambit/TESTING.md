@@ -139,23 +139,22 @@ All 36 tests in `test/Wager.t.sol` pass, including:
 
 ## DreamDEX Mirror Fix — September 5, 2026
 
-### Bug 1: Opening Price Mismatch — FIXED
+### Bug 1: Opening Price Mismatch — FIXED (with documented limitation)
 
-**Root cause**: Gambit used CoinGecko prices as opening prices, which are ~$40-$65 off from DreamDEX's actual oracle prices.
+**Root cause**: Gambit used CoinGecko prices as opening prices, which were ~$40-$65 off from DreamDEX's actual oracle prices.
 
 **Fix**: Added `fetchPriceFeedOpeningPrice()` in `dreamdex.ts` that queries the **prod price feed** (`price-feed.prd.oracle.somnia.host`) — the same oracle adapter DreamDEX uses. Queries `PricePoint(spot)` at the market's `tradingStart` timestamp. CoinGecko is only a fallback if the price feed has no data.
 
-**Verification** (September 5, 2026, 12:36 UTC):
+**Verification** (September 5, 2026):
 
-| Market | Price Feed Opening | Source |
-|--------|-------------------|--------|
-| BTC 5m (trading 12:35) | $79,693.75 | prod price feed at tradingStart |
-| BTC 15m (trading 12:30) | $79,664.90 | prod price feed at tradingStart |
-| BTC 1h (trading 12:00) | $79,626.90 | prod price feed at tradingStart |
-| ETH 5m (trading 12:35) | $2,457.13 | prod price feed at tradingStart |
-| ETH 1h (trading 12:00) | $2,454.17 | prod price feed at tradingStart |
+| Market | Price Feed | DreamDEX | Gap |
+|--------|-----------|----------|-----|
+| BTC 1h | $63,579.12 | $63,579.17 | $0.05 |
+| BTC 15m | ~$63,572 | ~$63,579 | ~$7 |
 
-These match DreamDEX exactly because both query the same on-chain oracle adapter.
+**Remaining gap — documented limitation**: The ~$0.05–$7 gap exists because DreamDEX settles via the **Prophecy Oracle**, which uses a different price source/timing than the off-chain price feed's `spot` field. The oracle's exact reference price is not accessible through the off-chain feed.
+
+**Investigation exhausted**: Both prod and dev indexers are completely reset (all event tables: `OracleAnswer`, `OracleQuestion`, `Fill`, `MarketResolutionEvent` — 0 rows). The `MarketReferenceLink → OracleAnswer` path that previously matched DreamDEX exactly is dead. The oracle explorer (`prd.oracle.somnia.host`) has `SourceAnswer` data but uses a different `question_id` namespace than DreamDEX's `oracleQuestionId` — no mapping endpoint exists. On-chain oracle adapter calls return empty. This is a testnet infrastructure limitation, not a Gambit bug.
 
 ### Bug 2: 15m Market Missing — FIXED
 
