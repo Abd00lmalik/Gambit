@@ -195,3 +195,22 @@ All 36 tests in `test/Wager.t.sol` pass, including:
 **Result**: Build fails with `Module not found: Can't resolve '@noble/curves/abstract/modular'`. The SDK's dependency tree expects `@noble/curves` and `@noble/hashes` which are not installed. Adding them would conflict with the existing viem@2.56.0 → wagmi → wagmi-safe chain.
 
 **Conclusion**: The SDK is not compatible with the current dependency stack without major dependency surgery. 3-second GraphQL polling is the shipped solution.
+
+### On-Chain Contract Check — No price view function found
+
+**Method**: Extracted all PUSH4 selectors from the BinaryMarket implementation bytecode (`0xdf87ac5c4760e2f1dd78e054ce0629a26a4ca5ca`), called 172 unique selectors both with no params and with `questionId` param on the proxy (`0x3ecC694Cef705358864a646142ac17A90E29e388`). Also checked the factory contract (`0x9e66dD3D9C75825bbe2f2D5B494cE89E08828a06`).
+
+**Result**: No selector returns a price/strike/reference value. All returned values are either global (same for every questionId: `outcomeSlotCount=3`, `isResolved=false`, `version=2.0.0`) or addresses/hashes. The `payoutNumerators()` function gives the win/loss vector, not the price. The BinaryMarket contract does not expose the settlement reference price as a public view function.
+
+### Trust Gap Indicator — "~" prefix (shipped)
+
+**Why**: The displayed opening price is sourced from the off-chain price feed, not the on-chain Prophecy Oracle which DreamDEX uses for settlement. The gap is $0.05–$7 depending on market volatility. Without the exact oracle price, showing a false-precision number could mislead users into judging outcomes against a slightly-off threshold.
+
+**Implementation**: Added `~` prefix to all opening price displays:
+- `buildMarketQuestion()` in `dreamdex.ts` — titles show "~$63,579.12" instead of "$63,579.12"
+- `create/page.tsx` SummaryRow — "~$63,579.12"
+- `pool/[address]/page.tsx` — "~$63,579.12"
+- `SquadPoolCard.tsx` — "~$63,579.12"
+- `SystemDuelCard.tsx` — "~$63,579.12"
+
+**Behavior**: The `~` prefix appears on every opening price since the BinaryMarket contract has no public view function exposing the exact settlement reference. This is honest, not alarming — it tells the user "this is the best approximation, the exact threshold is determined on-chain by DreamDEX's oracle."
