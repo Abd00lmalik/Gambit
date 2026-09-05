@@ -17,15 +17,19 @@ import {
   DREAMDEX_ABI,
   DuelState,
 } from "@/lib/contracts";
+import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
 
 export function useDuelFactory() {
   const { address } = useAccount();
   const { writeContractAsync, data: txHash, isPending } = useWriteContract();
   const { isLoading: isConfirming } = useWaitForTransactionReceipt({ hash: txHash });
+  const { ensureCorrectNetwork } = useEnsureCorrectNetwork();
 
   const createDuel = useCallback(
     async (marketAddress: Address, joinDeadlineSeconds: number, stakeEth: string) => {
       if (!address) throw new Error("Wallet not connected");
+      const ok = await ensureCorrectNetwork();
+      if (!ok) throw new Error("Wrong network");
       const deadline = Math.floor(Date.now() / 1000) + joinDeadlineSeconds;
       const hash = await writeContractAsync({
         address: FACTORY_ADDRESS,
@@ -36,42 +40,49 @@ export function useDuelFactory() {
       });
       return hash;
     },
-    [address, writeContractAsync]
+    [address, writeContractAsync, ensureCorrectNetwork]
   );
 
-  return { createDuel, txHash, isPending: isPending || isConfirming };
+  return { createDuel, txHash, isPending: isPending || isConfirming, ensureCorrectNetwork };
 }
 
 export function useDuelActions(duelAddress: Address) {
   const { writeContractAsync, data: joinTxHash, isPending: isJoinPending } = useWriteContract();
   const { isLoading: isJoinConfirming } = useWaitForTransactionReceipt({ hash: joinTxHash });
+  const { ensureCorrectNetwork } = useEnsureCorrectNetwork();
 
   const settleDuel = useCallback(async () => {
+    const ok = await ensureCorrectNetwork();
+    if (!ok) throw new Error("Wrong network");
     const hash = await writeContractAsync({
       address: duelAddress,
       abi: WAGER_ABI,
       functionName: "settle",
     });
     return hash;
-  }, [duelAddress, writeContractAsync]);
+  }, [duelAddress, writeContractAsync, ensureCorrectNetwork]);
 
   const refundDuel = useCallback(async () => {
+    const ok = await ensureCorrectNetwork();
+    if (!ok) throw new Error("Wrong network");
     const hash = await writeContractAsync({
       address: duelAddress,
       abi: WAGER_ABI,
       functionName: "refund",
     });
     return hash;
-  }, [duelAddress, writeContractAsync]);
+  }, [duelAddress, writeContractAsync, ensureCorrectNetwork]);
 
   const cancelDuel = useCallback(async () => {
+    const ok = await ensureCorrectNetwork();
+    if (!ok) throw new Error("Wrong network");
     const hash = await writeContractAsync({
       address: duelAddress,
       abi: WAGER_ABI,
       functionName: "cancel",
     });
     return hash;
-  }, [duelAddress, writeContractAsync]);
+  }, [duelAddress, writeContractAsync, ensureCorrectNetwork]);
 
   // ── Two-step deposit+join ──────────────────────────────
   // Somnia reverts writeContract with value. Player B must:
@@ -108,6 +119,8 @@ export function useDuelActions(duelAddress: Address) {
   const depositAndJoin = useCallback(
     async (amountEth: string) => {
       if (!publicClient) throw new Error("No public client");
+      const ok = await ensureCorrectNetwork();
+      if (!ok) throw new Error("Wrong network");
       const walletClient = await (window as any).ethereum;
       const accounts = await (window as any).ethereum.request({ method: "eth_accounts" });
       if (!accounts?.[0]) throw new Error("Wallet not connected");
@@ -145,7 +158,7 @@ export function useDuelActions(duelAddress: Address) {
 
       return hash;
     },
-    [duelAddress, writeContractAsync, publicClient]
+    [duelAddress, writeContractAsync, publicClient, ensureCorrectNetwork]
   );
 
   // Wait for join() tx confirmation

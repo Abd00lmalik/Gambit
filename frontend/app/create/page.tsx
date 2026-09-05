@@ -7,6 +7,7 @@ import { useAccount } from "wagmi";
 import { useLivePrices } from "@/hooks/useLivePrices";
 import { useIntervalTimer } from "@/hooks/useMarkets";
 import { useDuelFactory } from "@/hooks/useContracts";
+import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
 import { useMarketSentiment } from "@/hooks/useMarketSentiment";
 import CountdownTimer from "@/components/CountdownTimer";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
@@ -46,6 +47,7 @@ export default function CreateDuelPage() {
   const [verifying, setVerifying] = useState(false);
 
   const { createDuel, isPending } = useDuelFactory();
+  const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
   const timer = useIntervalTimer(selectedInterval);
 
   // Fetch selected market from DreamDEX — only when asset or interval changes
@@ -463,7 +465,7 @@ export default function CreateDuelPage() {
               {/* CTA */}
               <button
                 disabled={!isValid || isPending || verifying}
-                onClick={handleCreate}
+                onClick={isCorrectNetwork ? handleCreate : () => ensureCorrectNetwork()}
                 className={`min-h-[48px] w-full rounded-xl font-display text-base font-bold transition-all duration-200 cursor-pointer ${
                   isValid && !isPending
                     ? mode === "squad"
@@ -474,17 +476,21 @@ export default function CreateDuelPage() {
               >
                 {isPending
                   ? "Creating..."
-                  : verifying
-                    ? "Verifying Market..."
-                    : marketLoading
-                      ? "Loading market..."
-                      : !isConnected
-                        ? "Connect Wallet First"
-                        : !selectedMarket
-                          ? "No Market Available"
-                          : mode === "duel"
-                            ? "Create Challenge →"
-                            : "Create Squad Pool →"}
+                  : isChecking
+                    ? "Switching Network..."
+                    : verifying
+                      ? "Verifying Market..."
+                      : marketLoading
+                        ? "Loading market..."
+                        : !isConnected
+                          ? "Connect Wallet First"
+                          : !isCorrectNetwork
+                            ? "Switch to Somnia Testnet"
+                            : !selectedMarket
+                              ? "No Market Available"
+                              : mode === "duel"
+                                ? "Create Challenge →"
+                                : "Create Squad Pool →"}
               </button>
 
               <p className="font-body text-[11px] text-gray-500 text-center leading-relaxed">

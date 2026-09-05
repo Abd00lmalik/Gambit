@@ -10,6 +10,7 @@ import SettlementLatency from "@/components/SettlementLatency";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
 import OracleVerification from "@/components/OracleVerification";
 import { useDuelReads, useDuelActions, useMarketStatus } from "@/hooks/useContracts";
+import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
 import { DuelState, DUEL_STATE_LABELS, DUEL_STATE_COLORS } from "@/lib/contracts";
 
 const LiveChart = dynamic(() => import("@/components/LiveChart"), { ssr: false });
@@ -38,6 +39,7 @@ export default function DuelPage({ params }: { params: Promise<{ id: string }> }
   const duel = useDuelReads(duelAddress);
   const market = useMarketStatus(duel.marketAddress);
   const actions = useDuelActions(duelAddress);
+  const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
 
   useEffect(() => {
     if (duel.marketAddress) {
@@ -189,9 +191,13 @@ export default function DuelPage({ params }: { params: Promise<{ id: string }> }
           {/* Join button (if not joined and not creator and deadline not passed) */}
           {!hasJoined && !isCreator && state === DuelState.CREATED && (
             <button
-              disabled={actions.isPending}
+              disabled={actions.isPending || isChecking}
               onClick={async () => {
                 try {
+                  if (!isCorrectNetwork) {
+                    await ensureCorrectNetwork();
+                    return;
+                  }
                   await actions.depositAndJoin(duel.stakeAmount || "0.5");
                 } catch {}
               }}
@@ -201,37 +207,61 @@ export default function DuelPage({ params }: { params: Promise<{ id: string }> }
                 ? actions.joinStep === "deposit"
                   ? "Depositing STT..."
                   : "Joining..."
-                : "Accept Challenge →"}
+                : isChecking
+                  ? "Switching Network..."
+                  : !isCorrectNetwork
+                    ? "Switch to Somnia Testnet"
+                    : "Accept Challenge →"}
             </button>
           )}
 
           {/* Settle button (if both joined and market resolved) */}
           {hasJoined && state === DuelState.LOCKED && market.isResolved && (
             <button
-              disabled={actions.isPending}
+              disabled={actions.isPending || isChecking}
               onClick={async () => {
                 try {
+                  if (!isCorrectNetwork) {
+                    await ensureCorrectNetwork();
+                    return;
+                  }
                   await actions.settleDuel();
                 } catch {}
               }}
               className="min-h-[52px] w-full rounded-xl bg-teal py-3 font-display text-base font-bold text-carbon transition-all hover:bg-teal-light hover:shadow-lg hover:shadow-teal/20 active:scale-[0.97]"
             >
-              {actions.isPending ? "Settling..." : "Settle Duel →"}
+              {actions.isPending
+                ? "Settling..."
+                : isChecking
+                  ? "Switching Network..."
+                  : !isCorrectNetwork
+                    ? "Switch to Somnia Testnet"
+                    : "Settle Duel →"}
             </button>
           )}
 
           {/* Cancel button (only creator, only in CREATED state) */}
           {isCreator && state === DuelState.CREATED && (
             <button
-              disabled={actions.isPending}
+              disabled={actions.isPending || isChecking}
               onClick={async () => {
                 try {
+                  if (!isCorrectNetwork) {
+                    await ensureCorrectNetwork();
+                    return;
+                  }
                   await actions.cancelDuel();
                 } catch {}
               }}
               className="min-h-[52px] w-full rounded-xl border border-down/30 bg-down/5 py-3 font-display text-base font-bold text-down transition-all hover:bg-down/10 active:scale-[0.97]"
             >
-              {actions.isPending ? "Cancelling..." : "Cancel Duel"}
+              {actions.isPending
+                ? "Cancelling..."
+                : isChecking
+                  ? "Switching Network..."
+                  : !isCorrectNetwork
+                    ? "Switch to Somnia Testnet"
+                    : "Cancel Duel"}
             </button>
           )}
 
