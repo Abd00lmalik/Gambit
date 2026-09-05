@@ -81,23 +81,15 @@ export default function CreateDuelPage() {
   const isValid = stakeAmount >= 0.1 && stakeAmount <= 100 && isConnected && !!selectedMarket;
 
   const marketQuestion = useMemo(() => {
-    const expiryTime = selectedMarket
-      ? new Date(selectedMarket.expiry * 1000).toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: "UTC",
-          hour12: false,
-        })
-      : new Date(Date.now() + timer.secondsLeft * 1000).toLocaleTimeString("en-US", {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: "UTC",
-          hour12: false,
-        });
-
-    const strikePrice = selectedMarket?.openingPrice ?? strike;
-    return `Will ${asset} settle above $${strikePrice.toLocaleString("en-US", { minimumFractionDigits: 2 })} at ${expiryTime} UTC?`;
-  }, [asset, strike, timer.secondsLeft, selectedMarket]);
+    if (selectedMarket?.displayQuestion) return selectedMarket.displayQuestion;
+    const expiryTime = new Date(Date.now() + timer.secondsLeft * 1000).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "UTC",
+      hour12: false,
+    });
+    return `Will ${asset} close above its opening price at ${expiryTime} UTC?`;
+  }, [asset, timer.secondsLeft, selectedMarket]);
 
   const handleCreate = useCallback(async () => {
     if (!isValid || !selectedMarket) return;

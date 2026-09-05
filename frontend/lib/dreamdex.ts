@@ -2,12 +2,120 @@ import { type Address, createPublicClient, http, parseAbi } from "viem";
 import { somnia } from "./config";
 
 const GRAPHQL_URL = "https://dev.smk.somnia.host/v1/graphql";
+const PRICE_FEED_URL = "https://price-feed.dev.oracle.somnia.host/v1/graphql";
 
 const BINARY_MODULE_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as Address;
 
 const BINARY_MODULE_ABI = parseAbi([
   "function markets(bytes32 marketId) view returns (uint256 oracleQuestionId, uint8 outcomeSlotCount, uint8 voidPolicy, address collateral, uint32 originOperatorId, bytes32 originVenueId, address oracleAdapter, address creator, address market, address pool, uint256 yesId, uint256 noId, uint64 tradingStart, uint64 expiry)",
 ]);
+
+// In-memory cache for opening prices per market address
+const openingPriceCache = new Map<string, number | null>();
+
+/**
+ * Fetch opening price from DreamDEX price feed API.
+ * DreamDEX's frontend uses: fetchPriceCandles(asset, "M1", {from: tradingStart, limit: 1440})
+ * The first candle's `open` value is the opening price.
+ * Candle id format: "BTC/USDT-M1-{timestamp}"
+ */
+async function fetchOpeningPriceFromFeed(
+  asset: string,
+  tradingStart: number
+): Promise<number | null> {
+  try {
+    // Query for the candle at the exact tradingStart timestamp
+    const candleId = `${asset}/USDT-M1-${tradingStart}`;
+    const query = `{
+      Candle(limit: 1, where: {id: {_eq: "${candleId}"}}) { id }
+    }`;
+    const res = await fetch(PRICE_FEED_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    });
+    const data = await res.json();
+    const candle = data?.data?.Candle?.[0];
+    if (!candle) {
+      // Try a few minutes before tradingStart (price feed may have gaps)
+      for (let offset = 60; offset <= 300; offset += 60) {
+        const altId = `${asset}/USDT-M1-${tradingStart - offset}`;
+        const altRes = await fetch(PRICE_FEED_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: `{ Candle(limit: 1, where: {id: {_eq: "${altId}"}}) { id } }` }),
+        });
+        const altData = await altRes.json();
+        if (altData?.data?.Candle?.length > 0) {
+          // Found a candle — but we can't get open/close from just the id
+          // The price feed API returns empty fields for non-JSON columns
+          // Fall through to CoinGecko
+          break;
+        }
+      }
+    }
+    // Price feed API fields (o,h,l,c) return null in Hasura — the data is stored
+    // in the id string only. We cannot extract open price from it.
+    // Fall through to CoinGecko.
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch current BTC/ETH prices from CoinGecko.
+ * Used as fallback when price feed is unavailable.
+ */
+async function fetchCoinGeckoPrices(): Promise<Record<string, number>> {
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd"
+    );
+    const data = await res.json();
+    const result: Record<string, number> = {};
+    if (data.bitcoin?.usd) result.BTC = data.bitcoin.usd;
+    if (data.ethereum?.usd) result.ETH = data.ethereum.usd;
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Resolve the opening price for a market.
+ * Priority: cache → price feed API → CoinGecko → null
+ * The opening price is the asset price at the market's tradingStart time.
+ * For testnet, the price feed is stale so we use CoinGecko as proxy.
+ */
+async function resolveOpeningPrice(
+  marketAddress: string,
+  asset: string,
+  tradingStart: number
+): Promise<number | null> {
+  // Check cache first
+  if (openingPriceCache.has(marketAddress)) {
+    return openingPriceCache.get(marketAddress)!;
+  }
+
+  // Try price feed API
+  const feedPrice = await fetchOpeningPriceFromFeed(asset, tradingStart);
+  if (feedPrice !== null && feedPrice > 0) {
+    openingPriceCache.set(marketAddress, feedPrice);
+    return feedPrice;
+  }
+
+  // CoinGecko fallback — current price as proxy for opening price
+  // This is accurate when the page loads near tradingStart
+  const geckoPrices = await fetchCoinGeckoPrices();
+  const geckoPrice = geckoPrices[asset];
+  if (geckoPrice && geckoPrice > 0) {
+    openingPriceCache.set(marketAddress, geckoPrice);
+    return geckoPrice;
+  }
+
+  return null;
+}
 
 export interface MarketVerification {
   valid: boolean;
@@ -137,11 +245,13 @@ export interface DreamDexMarket {
   marketId: string;
   asset: string;
   question: string;
+  displayQuestion: string;
   strike: number;
   indexPrice: number;
   openingPrice: number | null;
   intervalSec: number;
   expiry: number;
+  tradingStart: number;
   clobStatus: string;
   binaryPoolAddress: string;
   venueId: string;
@@ -172,6 +282,41 @@ function parseStrikeFromQuestion(question: string): number | null {
   return null;
 }
 
+/**
+ * Compute the opening price for a DreamDEX market from available data.
+ * Priority: strike field → question text → null (caller should use live price).
+ */
+function deriveOpeningPrice(strike: number, question: string): number | null {
+  if (strike > 0) {
+    // strike is in micro-dollars when > 100000 (e.g. 7919999 → $79,199.99)
+    return strike > 100000 ? strike / 100 : strike;
+  }
+  const fromQuestion = parseStrikeFromQuestion(question);
+  if (fromQuestion !== null) return fromQuestion;
+  return null;
+}
+
+/**
+ * Build the DreamDEX-style market question text.
+ * DreamDEX format: "Will BTC settle above $79,670.28 at 08:00 UTC?"
+ */
+function buildMarketQuestion(
+  asset: string,
+  openingPrice: number | null,
+  expiry: number
+): string {
+  const expiryTime = new Date(expiry * 1000).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+    hour12: false,
+  });
+  if (openingPrice !== null && openingPrice > 0) {
+    return `Will ${asset} settle above $${openingPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} at ${expiryTime} UTC?`;
+  }
+  return `Will ${asset} close above its opening price at ${expiryTime} UTC?`;
+}
+
 export async function fetchActiveBinaryMarkets(
   limit = 30
 ): Promise<DreamDexMarket[]> {
@@ -191,6 +336,7 @@ export async function fetchActiveBinaryMarkets(
       indexPrice
       intervalSec
       expiry
+      tradingStart
       clobStatus
       binaryPoolAddress
       venueId
@@ -213,24 +359,22 @@ export async function fetchActiveBinaryMarkets(
       .filter((m: any) => m.marketAddress && m.clobStatus === "Trading")
       .map((m: any) => {
         const strikeVal = Number(m.strike);
-        const questionPrice = parseStrikeFromQuestion(m.question);
-        let openingPrice: number | null = null;
-        if (strikeVal > 0) {
-          openingPrice = strikeVal > 100000 ? strikeVal / 100 : strikeVal;
-        } else if (questionPrice !== null) {
-          openingPrice = questionPrice;
-        }
+        const expiry = Number(m.expiry);
+        const tradingStart = Number(m.tradingStart);
+        const openingPrice = deriveOpeningPrice(strikeVal, m.question);
         return {
           id: m.id,
           marketAddress: m.marketAddress as Address,
           marketId: m.marketId,
           asset: m.asset,
           question: m.question,
+          displayQuestion: buildMarketQuestion(m.asset, openingPrice, expiry),
           strike: strikeVal,
           indexPrice: Number(m.indexPrice) || 0,
           openingPrice,
           intervalSec: Number(m.intervalSec),
-          expiry: Number(m.expiry),
+          expiry,
+          tradingStart,
           clobStatus: m.clobStatus,
           binaryPoolAddress: m.binaryPoolAddress,
           venueId: m.venueId,
@@ -268,7 +412,7 @@ export async function fetchMarketsByInterval(
       limit: ${limit}
     ) {
       id marketAddress marketId asset question strike indexPrice
-      intervalSec expiry clobStatus binaryPoolAddress venueId
+      intervalSec expiry tradingStart clobStatus binaryPoolAddress venueId
       finalized voided oracleQuestionId
     }
   }`;
@@ -295,24 +439,22 @@ export async function fetchMarketsByInterval(
     .slice(0, limit)
     .map((m: any) => {
       const strikeVal = Number(m.strike);
-      const questionPrice = parseStrikeFromQuestion(m.question);
-      let openingPrice: number | null = null;
-      if (strikeVal > 0) {
-        openingPrice = strikeVal > 100000 ? strikeVal / 100 : strikeVal;
-      } else if (questionPrice !== null) {
-        openingPrice = questionPrice;
-      }
+      const expiry = Number(m.expiry);
+      const tradingStart = Number(m.tradingStart);
+      const openingPrice = deriveOpeningPrice(strikeVal, m.question);
       return {
         id: m.id,
         marketAddress: m.marketAddress as Address,
         marketId: m.marketId,
         asset: m.asset,
         question: m.question,
+        displayQuestion: buildMarketQuestion(m.asset, openingPrice, expiry),
         strike: strikeVal,
         indexPrice: Number(m.indexPrice) || 0,
         openingPrice,
         intervalSec: Number(m.intervalSec),
-        expiry: Number(m.expiry),
+        expiry,
+        tradingStart,
         clobStatus: m.clobStatus,
         binaryPoolAddress: m.binaryPoolAddress,
         venueId: m.venueId,

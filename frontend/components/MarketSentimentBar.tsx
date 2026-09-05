@@ -122,7 +122,7 @@ export default function MarketSentimentBar({
 
       <div className="mt-2 flex items-center justify-between">
         <span className="font-body text-[10px] text-gray-500">
-          Mid: {sentiment.midPrice.toFixed(4)} · Spread: {sentiment.spread.toFixed(4)}
+          Mid: {(sentiment.midPrice * 100).toFixed(1)}% · Spread: {(sentiment.spread * 100).toFixed(1)}%
         </span>
         <span className="font-body text-[10px] text-gray-500">
           From DreamDEX CLOB

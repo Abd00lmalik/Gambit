@@ -248,7 +248,7 @@ export default function SquadPoolPage() {
                 ) : selectedMarket ? (
                   <>
                     <p className="font-body text-sm text-foam">
-                      Will {selectedAsset} close above ${selectedMarket.openingPrice?.toLocaleString("en-US", { minimumFractionDigits: 2 }) ?? "—"}?
+                      {selectedMarket.displayQuestion || `Will ${selectedAsset} close above its opening price?`}
                     </p>
                     <p className="font-body text-[10px] text-gray-500 mt-1">
                       Market: {selectedMarket.marketAddress.slice(0, 8)}...{selectedMarket.marketAddress.slice(-4)} · Expires: {new Date(selectedMarket.expiry * 1000).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "UTC", hour12: false })} UTC
