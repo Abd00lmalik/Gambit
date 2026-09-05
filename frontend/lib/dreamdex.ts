@@ -128,6 +128,53 @@ async function fetchPriceFeedOpeningPrice(
   return null;
 }
 
+/**
+ * Get exact opening price from DreamDEX's OracleAnswer table.
+ * This is the EXACT value DreamDEX's own frontend displays.
+ * Uses MarketReferenceLink → OracleAnswer_by_pk(numericValue / 100).
+ */
+async function fetchOracleOpeningPrice(
+  marketId: string,
+): Promise<number | null> {
+  const cacheKey = `oracle|${marketId}`;
+  if (openingPriceCache.has(cacheKey)) {
+    return openingPriceCache.get(cacheKey)!;
+  }
+
+  try {
+    // Step 1: Get reference question ID from MarketReferenceLink
+    const refQuery = `{
+      MarketReferenceLink(limit: 1, where: {market_id: {_eq: "${marketId}"}}) {
+        referenceQuestionId
+      }
+    }`;
+    const refData = await gqlRaw(PROD_GRAPHQL_URL, refQuery);
+    const refLink = refData.MarketReferenceLink?.[0];
+    if (!refLink?.referenceQuestionId) return null;
+
+    // Step 2: Get oracle answer by PK (the exact value DreamDEX uses)
+    const ansQuery = `{
+      OracleAnswer_by_pk(id: "${refLink.referenceQuestionId}") {
+        numericValue
+      }
+    }`;
+    const ansData = await gqlRaw(PROD_GRAPHQL_URL, ansQuery);
+    const ans = ansData.OracleAnswer_by_pk;
+    if (!ans?.numericValue) return null;
+
+    // numericValue is in cents (divide by 100 for dollars)
+    const price = Number(ans.numericValue) / 100;
+    if (price > 0) {
+      openingPriceCache.set(cacheKey, price);
+      return price;
+    }
+  } catch {
+    // fall through
+  }
+
+  return null;
+}
+
 function parseStrikeFromQuestion(question: string): number | null {
   if (!question) return null;
   const match = question.match(/at or above\s+([\d,]+\.?\d*)/i);
@@ -194,11 +241,19 @@ function mapMarketRaw(m: any): any {
 async function enrichMarketWithPrice(raw: any): Promise<DreamDexMarket> {
   const m = { ...raw };
 
-  // Try price feed first (exact DreamDEX-native price)
+  // Priority 1: Oracle answer (exact, matches DreamDEX's own display)
+  const oraclePrice = await fetchOracleOpeningPrice(m.id);
+  if (oraclePrice !== null) {
+    m.openingPrice = oraclePrice;
+    m.priceIsApproximate = false;
+  }
+
+  // Priority 2: Price feed (approximate, ~$0.03-$1.70 off)
   if (m.openingPrice === null || m.openingPrice === 0) {
     const feedPrice = await fetchPriceFeedOpeningPrice(m.asset, m.tradingStart);
     if (feedPrice !== null) {
       m.openingPrice = feedPrice;
+      m.priceIsApproximate = true;
     }
   }
 
