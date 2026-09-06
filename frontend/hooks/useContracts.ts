@@ -37,7 +37,7 @@ export function useDuelFactory() {
         functionName: "createDuel",
         args: [marketAddress, BigInt(deadline)],
         value: parseEther(stakeEth),
-        gas: 5_000_000n,
+        gas: BigInt(5000000),
       });
       return hash;
     },
@@ -59,7 +59,7 @@ export function useDuelActions(duelAddress: Address) {
       address: duelAddress,
       abi: WAGER_ABI,
       functionName: "settle",
-      gas: 2_000_000n,
+      gas: BigInt(2000000),
     });
     return hash;
   }, [duelAddress, writeContractAsync, ensureCorrectNetwork]);
@@ -71,7 +71,7 @@ export function useDuelActions(duelAddress: Address) {
       address: duelAddress,
       abi: WAGER_ABI,
       functionName: "refund",
-      gas: 2_000_000n,
+      gas: BigInt(2000000),
     });
     return hash;
   }, [duelAddress, writeContractAsync, ensureCorrectNetwork]);
@@ -83,7 +83,7 @@ export function useDuelActions(duelAddress: Address) {
       address: duelAddress,
       abi: WAGER_ABI,
       functionName: "cancel",
-      gas: 2_000_000n,
+      gas: BigInt(2000000),
     });
     return hash;
   }, [duelAddress, writeContractAsync, ensureCorrectNetwork]);
@@ -152,7 +152,7 @@ export function useDuelActions(duelAddress: Address) {
             address: duelAddress,
             abi: WAGER_ABI,
             functionName: "join",
-            gas: 2_000_000n,
+            gas: BigInt(2000000),
           });
           setJoinStep("done");
         } catch (e) {
