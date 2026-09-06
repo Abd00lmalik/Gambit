@@ -339,9 +339,11 @@ export async function verifyMarketAddress(
         return { valid: false, marketId, clobStatus: market.clobStatus, error: `Market is not tradeable (status: ${market.clobStatus})` };
       }
 
-      // On-chain verification: check code exists and uses accepted implementation
+      // On-chain verification: resolve the real Market contract from BinaryMarketsModule,
+      // then check its code and implementation. The raw marketAddress may be a CLOB
+      // reactivity address with no EVM code — that's by DreamDEX design.
       if (publicClient) {
-        const codeCheck = await verifyMarketImplementation(marketAddress, publicClient);
+        const codeCheck = await verifyMarketImplementation(marketId, publicClient);
         if (!codeCheck.valid) {
           return { valid: false, marketId, expiry: market.expiry, clobStatus: market.clobStatus, error: codeCheck.error };
         }
@@ -351,45 +353,70 @@ export async function verifyMarketAddress(
     } catch { continue; }
   }
 
-  if (publicClient) {
-    const codeCheck = await verifyMarketImplementation(marketAddress, publicClient);
-    if (!codeCheck.valid) {
-      return codeCheck;
-    }
-  }
-
   return { valid: false, error: "Market not found in any DreamDEX indexer" };
 }
 
-// Accepted Market contract implementation (EIP-1167 impl address).
-// Markets with older implementations (0xd12ad05b...) don't emit Resolved events
-// and cannot be used for reactive settlement.
-const ACCEPTED_MARKET_IMPL = "0x6b2fee58f90aee79be03e417213c547526791102";
+// BinaryMarketsModule — the registry that maps marketId → Market contract.
+const BINARY_MARKETS_MODULE = "0x3ecC694Cef705358864a646142ac17A90E29e388";
+
+// Minimal ABI for markets(bytes32) → returns the MarketRecord struct.
+// We only need the return data; viem handles decoding.
+const BINARY_MARKETS_ABI = [
+  {
+    name: "markets",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "marketId", type: "bytes32" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "oracleQuestionId", type: "uint256" },
+          { name: "outcomeSlotCount", type: "uint8" },
+          { name: "voidPolicy", type: "uint8" },
+          { name: "collateral", type: "address" },
+          { name: "originOperatorId", type: "uint32" },
+          { name: "originVenueId", type: "bytes32" },
+          { name: "oracleAdapter", type: "address" },
+          { name: "creator", type: "address" },
+          { name: "market", type: "address" },       // The Market contract that emits Resolved events
+          { name: "pool", type: "address" },
+          { name: "yesId", type: "uint256" },
+          { name: "noId", type: "uint256" },
+          { name: "tradingStart", type: "uint64" },
+          { name: "expiry", type: "uint64" },
+        ],
+      },
+    ],
+  },
+] as const;
 
 async function verifyMarketImplementation(
-  marketAddress: Address,
+  marketId: string,
   publicClient: PublicClient
 ): Promise<{ valid: boolean; error?: string }> {
   try {
-    const code = await publicClient.getCode({ address: marketAddress });
-    if (!code || code === "0x") {
-      return { valid: false, error: "Market address has no deployed code" };
+    // Step 1: Resolve the real Market contract address from BinaryMarketsModule.
+    // The raw marketAddress from the indexer is a CLOB reactivity address — codeless by design.
+    const marketRecord = await publicClient.readContract({
+      address: BINARY_MARKETS_MODULE as Address,
+      abi: BINARY_MARKETS_ABI,
+      functionName: "markets",
+      args: [marketId as `0x${string}`],
+    });
+
+    const resolvedMarketAddress = (marketRecord as any).market as Address;
+    if (!resolvedMarketAddress || resolvedMarketAddress === "0x0000000000000000000000000000000000000000") {
+      return { valid: false, error: "Market not found in on-chain registry" };
     }
 
-    // EIP-1167 minimal proxy is exactly 45 bytes:
-    // 363d3d373d3d3d363d73<20-byte-impl>5af43d82803e903d91602b57fd5bf3
-    const codeHex = code.startsWith("0x") ? code.slice(2) : code;
-    if (codeHex.length === 90) {
-      // Extract implementation address from bytes 10-29 (hex chars 20-60)
-      const impl = "0x" + codeHex.slice(20, 60);
-      if (impl.toLowerCase() !== ACCEPTED_MARKET_IMPL.toLowerCase()) {
-        return {
-          valid: false,
-          error: "Market uses an older contract version that doesn't support auto-settlement. Please select a different market.",
-        };
-      }
+    // Step 2: Check the resolved Market contract has code
+    const code = await publicClient.getCode({ address: resolvedMarketAddress });
+    if (!code || code === "0x") {
+      return { valid: false, error: "Market contract has no deployed code" };
     }
-    // If it's not a standard EIP-1167 proxy, allow it (could be a direct implementation)
+
     return { valid: true };
   } catch {
     return { valid: false, error: "Failed to verify market implementation on-chain" };
