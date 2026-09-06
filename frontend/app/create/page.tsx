@@ -112,25 +112,63 @@ export default function CreateDuelPage() {
       const marketId = selectedMarket.marketId;
       const deadline = INTERVAL_SEC[selectedInterval];
       const hash = await createDuel(marketAddress, marketId, deadline, String(stakeAmount));
-      setTxHash(hash);
 
-      // P5: Wait for receipt and extract clone address for direct invite link
+      // Wait for receipt BEFORE showing success screen.
+      // Never show "Duel Created!" based on hash alone — the tx may have reverted on-chain.
+      let receipt;
       try {
-        const receipt = await publicClient.waitForTransactionReceipt({ hash });
-        const duelCreatedTopic = "0x068f7dba6a893c40cac4a9566681d8fbb4ee83dd3b803d2f44adf1b85422ad5b";
-        for (const log of receipt.logs) {
-          if (
-            log.address.toLowerCase() === FACTORY_ADDRESS.toLowerCase() &&
-            log.topics[0] === duelCreatedTopic
-          ) {
-            const cloneTopic = log.topics[1];
-            if (cloneTopic) {
-              setCloneAddress("0x" + cloneTopic.slice(26));
-            }
-            break;
+        receipt = await publicClient.waitForTransactionReceipt({ hash });
+      } catch (receiptError: any) {
+        // waitForTransactionReceipt throws if the tx is not found within timeout.
+        // In this case we still show the tx hash link so the user can investigate.
+        setTxHash(hash);
+        setError("Transaction submitted but receipt not confirmed. Check the tx link below.");
+        setVerifying(false);
+        return;
+      }
+
+      if (receipt.status !== "success") {
+        // Transaction reverted on-chain. Extract revert reason from logs if possible.
+        let revertReason = "Transaction reverted on-chain";
+        try {
+          // Try to decode the revert data from the receipt
+          const tx = await publicClient.getTransaction({ hash });
+          if (tx?.input) {
+            // Attempt a static call to get the revert reason
+            await publicClient.call({
+              to: tx.to,
+              data: tx.input,
+              value: tx.value,
+              account: tx.from,
+            });
           }
+        } catch (callError: any) {
+          // The call reverts with a reason — extract it
+          const msg = callError?.details || callError?.shortMessage || callError?.message || "";
+          if (msg) revertReason = msg;
         }
-      } catch {}
+        setError(`Transaction failed: ${revertReason}`);
+        setVerifying(false);
+        return;
+      }
+
+      // Transaction succeeded — extract clone address from DuelCreated event
+      const duelCreatedTopic = "0x068f7dba6a893c40cac4a9566681d8fbb4ee83dd3b803d2f44adf1b85422ad5b";
+      for (const log of receipt.logs) {
+        if (
+          log.address.toLowerCase() === FACTORY_ADDRESS.toLowerCase() &&
+          log.topics[0] === duelCreatedTopic
+        ) {
+          const cloneTopic = log.topics[1];
+          if (cloneTopic) {
+            setCloneAddress("0x" + cloneTopic.slice(26));
+          }
+          break;
+        }
+      }
+
+      // NOW show the success screen — receipt is confirmed
+      setTxHash(hash);
     } catch (e: any) {
       setError(e?.message?.includes("User rejected") ? "Transaction rejected" : "Failed to create duel");
     } finally {
