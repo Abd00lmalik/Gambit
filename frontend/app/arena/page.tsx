@@ -1,19 +1,117 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAccount } from "wagmi";
+import { useSearchParams } from "next/navigation";
 import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
+import { usePublicClient } from "wagmi";
+import { somnia } from "@/lib/config";
+import { FACTORY_ADDRESS } from "@/lib/contracts";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
 import AssetIcon from "@/components/AssetIcon";
 
 const FILTERS = ["All", "BTC", "ETH", "Open", "Live", "Settled"] as const;
 
+async function resolveHighlightToClone(
+  client: any,
+  highlight: string
+): Promise<string | null> {
+  if (!highlight.startsWith("0x") || highlight.length < 66) return null;
+  try {
+    const receipt = await client.getTransactionReceipt({
+      hash: highlight as `0x${string}`,
+    });
+    if (!receipt) return null;
+    const duelCreatedTopic =
+      "0x068f7dba6a893c40cac4a9566681d8fbb4ee83dd3b803d2f44adf1b85422ad5b";
+    for (const log of receipt.logs) {
+      if (
+        log.address.toLowerCase() === FACTORY_ADDRESS.toLowerCase() &&
+        log.topics[0] === duelCreatedTopic
+      ) {
+        const cloneTopic = log.topics[1];
+        if (cloneTopic) {
+          return "0x" + cloneTopic.slice(26);
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
 export default function ArenaPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen py-8 px-4">
+          <div className="mx-auto max-w-6xl">
+            <div className="mb-8">
+              <div className="h-10 bg-white/5 rounded w-32 mb-2" />
+              <div className="h-4 bg-white/5 rounded w-64" />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="rounded-2xl border border-white/5 bg-white/[0.02] p-4 animate-pulse"
+                >
+                  <div className="h-4 bg-white/5 rounded w-1/3 mb-4" />
+                  <div className="h-6 bg-white/5 rounded w-1/2 mb-3" />
+                  <div className="h-3 bg-white/5 rounded w-2/3" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <ArenaContent />
+    </Suspense>
+  );
+}
+
+function ArenaContent() {
   const { isConnected } = useAccount();
   const { duels, isLoading } = useDuelCreatedEvents();
   const [filter, setFilter] = useState<string>("All");
   const [sort, setSort] = useState<"newest" | "stake">("newest");
+  const searchParams = useSearchParams();
+  const highlight = searchParams.get("highlight");
+  const highlightRef = useRef<string | null>(null);
+  const highlightedRef = useRef(false);
+  const client = usePublicClient({ chainId: somnia.id });
+
+  useEffect(() => {
+    if (!highlight || highlightedRef.current || !client || duels.length === 0)
+      return;
+
+    const tryHighlight = async () => {
+      let targetAddress: string | null = null;
+
+      const isDuelAddress =
+        highlight.startsWith("0x") && highlight.length === 42;
+      if (isDuelAddress) {
+        targetAddress = highlight.toLowerCase();
+      } else {
+        targetAddress = await resolveHighlightToClone(client, highlight);
+      }
+
+      if (!targetAddress) return;
+
+      highlightRef.current = targetAddress;
+      highlightedRef.current = true;
+
+      const el = window.document.getElementById(
+        `duel-${targetAddress}`
+      );
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    };
+
+    tryHighlight();
+  }, [highlight, client, duels]);
 
   const filtered = duels
     .filter((d) => {
@@ -105,13 +203,19 @@ export default function ArenaPage() {
               {filtered.map((duel, i) => (
                 <motion.div
                   key={duel.address}
+                  id={`duel-${duel.address.toLowerCase()}`}
                   initial={{ opacity: 0, y: 16 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ type: "spring", damping: 20, stiffness: 100, delay: i * 0.05 }}
                   layout
                 >
-                  <DuelCardOnChain duel={duel} />
+                  <DuelCardOnChain
+                    duel={duel}
+                    isHighlighted={
+                      highlightRef.current === duel.address.toLowerCase()
+                    }
+                  />
                 </motion.div>
               ))}
             </AnimatePresence>
@@ -124,7 +228,13 @@ export default function ArenaPage() {
   );
 }
 
-function DuelCardOnChain({ duel }: { duel: any }) {
+function DuelCardOnChain({
+  duel,
+  isHighlighted,
+}: {
+  duel: any;
+  isHighlighted?: boolean;
+}) {
   const state = duel.state as DuelState;
   const isOpen = state === DuelState.CREATED;
   const isLive = state === DuelState.LOCKED;
@@ -144,7 +254,9 @@ function DuelCardOnChain({ duel }: { duel: any }) {
   return (
     <a
       href={`/duel/${duel.address}`}
-      className={`block rounded-2xl border p-4 transition-all duration-200 group cursor-pointer ${stateColors[state] || "border-white/10 bg-white/[0.03]"}`}
+      className={`block rounded-2xl border p-4 transition-all duration-200 group cursor-pointer ${
+        stateColors[state] || "border-white/10 bg-white/[0.03]"
+      } ${isHighlighted ? "ring-2 ring-teal shadow-lg shadow-teal/20" : ""}`}
     >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">

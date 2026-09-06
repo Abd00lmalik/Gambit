@@ -7,6 +7,11 @@ import { somnia } from "@/lib/config";
 import { FACTORY_ADDRESS, WAGER_ABI } from "@/lib/contracts";
 
 const CHUNK = BigInt(900);
+const MAX_RETRIES_PER_CHUNK = 3;
+const PARALLEL_BATCH = 6;
+const CLONE_READ_BATCH = 10;
+const INITIAL_RANGE = BigInt(200_000);
+const POLL_INTERVAL = 15_000;
 
 export interface OnChainDuel {
   address: Address;
@@ -18,10 +23,137 @@ export interface OnChainDuel {
   state: number;
 }
 
+const DUEL_CREATED_EVENT = {
+  type: "event" as const,
+  name: "DuelCreated",
+  inputs: [
+    { name: "clone", type: "address", indexed: true },
+    { name: "playerA", type: "address", indexed: true },
+    { name: "stakeAmount", type: "uint256", indexed: false },
+    { name: "marketAddress", type: "address", indexed: false },
+    { name: "joinDeadline", type: "uint256", indexed: false },
+  ],
+} as const;
+
+async function fetchChunkWithRetry(
+  client: any,
+  from: bigint,
+  to: bigint,
+  retries = MAX_RETRIES_PER_CHUNK
+): Promise<any[]> {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await client.getLogs({
+        address: FACTORY_ADDRESS,
+        event: DUEL_CREATED_EVENT,
+        fromBlock: from,
+        toBlock: to,
+      });
+    } catch (e) {
+      if (attempt === retries - 1) return [];
+      await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+    }
+  }
+  return [];
+}
+
+async function parallelScan(
+  client: any,
+  from: bigint,
+  to: bigint
+): Promise<any[]> {
+  const ranges: { from: bigint; to: bigint }[] = [];
+  let cursor = from;
+  while (cursor <= to) {
+    const end = cursor + CHUNK - BigInt(1) > to ? to : cursor + CHUNK - BigInt(1);
+    ranges.push({ from: cursor, to: end });
+    cursor = end + BigInt(1);
+  }
+
+  const allLogs: any[] = [];
+  for (let i = 0; i < ranges.length; i += PARALLEL_BATCH) {
+    const batch = ranges.slice(i, i + PARALLEL_BATCH);
+    const results = await Promise.all(
+      batch.map((r) => fetchChunkWithRetry(client, r.from, r.to))
+    );
+    for (const logs of results) {
+      allLogs.push(...logs);
+    }
+  }
+  return allLogs;
+}
+
+async function readDuelState(
+  client: any,
+  clone: Address
+): Promise<{ state: number; playerB: Address }> {
+  try {
+    const [stateResult, playerBResult] = await Promise.all([
+      client.readContract({
+        address: clone,
+        abi: WAGER_ABI,
+        functionName: "state",
+      }),
+      client.readContract({
+        address: clone,
+        abi: WAGER_ABI,
+        functionName: "playerB",
+      }),
+    ]);
+    return {
+      state: Number(stateResult),
+      playerB:
+        playerBResult !== "0x0000000000000000000000000000000000000000"
+          ? (playerBResult as Address)
+          : "0x0000000000000000000000000000000000000000",
+    };
+  } catch {
+    return { state: 0, playerB: "0x0000000000000000000000000000000000000000" };
+  }
+}
+
+async function batchReadDuelStates(
+  client: any,
+  clones: Address[]
+): Promise<Map<Address, { state: number; playerB: Address }>> {
+  const results = new Map<Address, { state: number; playerB: Address }>();
+  for (let i = 0; i < clones.length; i += CLONE_READ_BATCH) {
+    const batch = clones.slice(i, i + CLONE_READ_BATCH);
+    const batchResults = await Promise.all(
+      batch.map((clone) => readDuelState(client, clone))
+    );
+    batch.forEach((clone, idx) => {
+      results.set(clone, batchResults[idx]);
+    });
+  }
+  return results;
+}
+
+function logsToDuels(
+  logs: any[],
+  stateMap: Map<Address, { state: number; playerB: Address }>
+): OnChainDuel[] {
+  return logs.map((log) => {
+    const { clone, playerA, stakeAmount, marketAddress, joinDeadline } =
+      log.args;
+    const onChain = stateMap.get(clone!);
+    return {
+      address: clone!,
+      playerA: playerA!,
+      playerB: onChain?.playerB ?? "0x0000000000000000000000000000000000000000",
+      stakeAmount: formatEther(stakeAmount!),
+      marketAddress: marketAddress!,
+      joinDeadline: Number(joinDeadline),
+      state: onChain?.state ?? 0,
+    };
+  });
+}
+
 export function useDuelCreatedEvents() {
   const [duels, setDuels] = useState<OnChainDuel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const isInitialLoad = useRef(true);
+  const lastScannedBlock = useRef<bigint>(BigInt(0));
   const client = usePublicClient({ chainId: somnia.id });
 
   const fetchDuels = useCallback(async () => {
@@ -30,75 +162,41 @@ export function useDuelCreatedEvents() {
 
     try {
       const latest = await client.getBlockNumber();
-      const allLogs: any[] = [];
-      let from = latest > BigInt(200_000) ? latest - BigInt(200_000) : BigInt(0);
-      let emptyChunks = 0;
 
-      while (from <= latest) {
-        const to = from + CHUNK - BigInt(1) > latest ? latest : from + CHUNK - BigInt(1);
-        try {
-          const logs = await client.getLogs({
-            address: FACTORY_ADDRESS,
-            event: {
-              type: "event",
-              name: "DuelCreated",
-              inputs: [
-                { name: "clone", type: "address", indexed: true },
-                { name: "playerA", type: "address", indexed: true },
-                { name: "stakeAmount", type: "uint256", indexed: false },
-                { name: "marketAddress", type: "address", indexed: false },
-                { name: "joinDeadline", type: "uint256", indexed: false },
-              ],
-            },
-            fromBlock: from,
-            toBlock: to,
-          });
-          allLogs.push(...logs);
-          emptyChunks = 0;
-        } catch {
-          emptyChunks++;
-          if (emptyChunks > 2) break;
+      let allLogs: any[];
+      if (lastScannedBlock.current === BigInt(0)) {
+        const from =
+          latest > INITIAL_RANGE ? latest - INITIAL_RANGE : BigInt(0);
+        allLogs = await parallelScan(client, from, latest);
+      } else {
+        const from = lastScannedBlock.current + BigInt(1);
+        if (from > latest) {
+          isInitialLoad.current = false;
+          setIsLoading(false);
+          return;
         }
-        from = to + BigInt(1);
+        allLogs = await parallelScan(client, from, latest);
       }
 
-      const results: OnChainDuel[] = [];
-      for (const log of allLogs) {
-        const { clone, playerA, stakeAmount, marketAddress, joinDeadline } = log.args;
+      lastScannedBlock.current = latest;
 
-        let eventState = 0;
-        let playerB: Address = "0x0000000000000000000000000000000000000000";
-        try {
-          const [stateResult, playerBResult] = await Promise.all([
-            client.readContract({
-              address: clone!,
-              abi: WAGER_ABI,
-              functionName: "state",
-            }),
-            client.readContract({
-              address: clone!,
-              abi: WAGER_ABI,
-              functionName: "playerB",
-            }),
-          ]);
-          eventState = Number(stateResult);
-          if (playerBResult !== "0x0000000000000000000000000000000000000000") {
-            playerB = playerBResult as Address;
+      const clones = allLogs.map((log) => log.args.clone as Address);
+      const stateMap = await batchReadDuelStates(client, clones);
+      const newDuels = logsToDuels(allLogs, stateMap);
+
+      if (lastScannedBlock.current === latest && isInitialLoad.current) {
+        setDuels(newDuels.reverse());
+      } else {
+        setDuels((prev) => {
+          const existing = new Map(prev.map((d) => [d.address, d]));
+          for (const d of newDuels) {
+            existing.set(d.address, d);
           }
-        } catch {}
-
-        results.push({
-          address: clone!,
-          playerA: playerA!,
-          playerB,
-          stakeAmount: formatEther(stakeAmount!),
-          marketAddress: marketAddress!,
-          joinDeadline: Number(joinDeadline),
-          state: eventState,
+          return [...existing.values()].sort(
+            (a, b) => b.joinDeadline - a.joinDeadline
+          );
         });
       }
-
-      setDuels(results.reverse());
     } catch (e) {
       console.error("Failed to fetch duel events:", e);
     } finally {
@@ -109,7 +207,7 @@ export function useDuelCreatedEvents() {
 
   useEffect(() => {
     fetchDuels();
-    const interval = setInterval(fetchDuels, 30000);
+    const interval = setInterval(fetchDuels, POLL_INTERVAL);
     return () => clearInterval(interval);
   }, [fetchDuels]);
 

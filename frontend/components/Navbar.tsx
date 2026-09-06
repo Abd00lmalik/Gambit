@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { useAccount } from "wagmi";
 import CustomConnectButton from "./CustomConnectButton";
 
 export default function Navbar() {
   const { address } = useAccount();
+  const pathname = usePathname();
 
   return (
     <motion.nav
@@ -26,12 +28,12 @@ export default function Navbar() {
         </Link>
 
         <div className="hidden items-center gap-1 md:flex">
-          <NavLink href="/arena">Arena</NavLink>
-          <NavLink href="/create">Create Duel</NavLink>
+          <NavLink href="/arena" pathname={pathname}>Arena</NavLink>
+          <NavLink href="/create" pathname={pathname}>Create Duel</NavLink>
           {address && (
-            <NavLink href={`/u/${address}`}>Profile</NavLink>
+            <NavLink href={`/u/${address}`} pathname={pathname}>Profile</NavLink>
           )}
-          <NavLink href="/portfolio">Portfolio</NavLink>
+          <NavLink href="/portfolio" pathname={pathname}>Portfolio</NavLink>
         </div>
 
         <div className="flex items-center gap-3">
@@ -42,11 +44,16 @@ export default function Navbar() {
   );
 }
 
-function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+function NavLink({ href, pathname, children }: { href: string; pathname: string; children: React.ReactNode }) {
+  const isActive = pathname === href || (href !== "/" && pathname.startsWith(href));
   return (
     <Link
       href={href}
-      className="min-h-[44px] min-w-[44px] flex items-center rounded-lg px-4 py-2 font-body text-sm text-gray-300 transition-all duration-200 hover:bg-white/5 hover:text-teal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal cursor-pointer"
+      className={`min-h-[44px] min-w-[44px] flex items-center rounded-lg px-4 py-2 font-body text-sm transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal cursor-pointer ${
+        isActive
+          ? "bg-teal/10 text-teal font-semibold"
+          : "text-gray-300 hover:bg-white/5 hover:text-teal"
+      }`}
     >
       {children}
     </Link>
