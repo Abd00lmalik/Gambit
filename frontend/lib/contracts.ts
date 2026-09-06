@@ -1,5 +1,5 @@
-export const FACTORY_ADDRESS = "0xf96913baFdb849c3c9d765879247F3EC9D3749cF" as const;
-export const IMPLEMENTATION_ADDRESS = "0x58b084fb8329abbebb5b8096ab7c148e5e74469c" as const;
+export const FACTORY_ADDRESS = "0xeEb9F8bCC9b02016CE7a1f5CEca0bFc6e1c316C2" as const;
+export const IMPLEMENTATION_ADDRESS = "0xf49E3BdFA8c34355505Eb0d5BC4DdeA6ec8ADE55" as const;
 export const FEE_RECIPIENT = "0x25265b9dBEb6c653b0CA281110Bb0697a9685107" as const;
 export const DEX_EVENT_CONTRACTS_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
 export const VENUE_ID_TESTNET = "0x679795a0195a1b76cdebb7c51d74e058aee92919b8c3389af86ef24535e8a28c" as const;
@@ -11,6 +11,7 @@ export const FACTORY_ABI = [
     name: "createDuel",
     inputs: [
       { name: "_marketAddress", type: "address" },
+      { name: "_marketId", type: "bytes32" },
       { name: "_joinDeadline", type: "uint256" },
     ],
     outputs: [{ name: "clone", type: "address" }],
@@ -183,6 +184,26 @@ export const WAGER_ABI = [
     inputs: [{ name: "", type: "address" }],
     outputs: [{ name: "", type: "uint256" }],
     stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "marketId",
+    inputs: [],
+    outputs: [{ name: "", type: "bytes32" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "initialize",
+    inputs: [
+      { name: "_owner", type: "address" },
+      { name: "_marketAddress", type: "address" },
+      { name: "_marketId", type: "bytes32" },
+      { name: "_feeBps", type: "uint256" },
+      { name: "_joinDeadline", type: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
   },
 ] as const;
 

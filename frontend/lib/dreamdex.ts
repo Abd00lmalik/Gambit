@@ -1,4 +1,4 @@
-import { type Address } from "viem";
+import { type Address, type PublicClient } from "viem";
 
 const DEV_GRAPHQL_URL = "https://dev.smk.somnia.host/v1/graphql";
 const PROD_GRAPHQL_URL = "https://prd.smk.somnia.host/v1/graphql";
@@ -314,7 +314,8 @@ export interface MarketVerification {
 }
 
 export async function verifyMarketAddress(
-  marketAddress: Address
+  marketAddress: Address,
+  publicClient?: PublicClient
 ): Promise<MarketVerification> {
   const query = `{
     Market(
@@ -340,6 +341,18 @@ export async function verifyMarketAddress(
       return { valid: true, marketId, expiry: market.expiry, clobStatus: market.clobStatus };
     } catch { continue; }
   }
+
+  if (publicClient) {
+    try {
+      const code = await publicClient.getCode({ address: marketAddress });
+      if (!code || code === "0x") {
+        return { valid: false, error: "Market address has no deployed code" };
+      }
+    } catch {
+      return { valid: false, error: "Failed to verify market address on-chain" };
+    }
+  }
+
   return { valid: false, error: "Market not found in any DreamDEX indexer" };
 }
 

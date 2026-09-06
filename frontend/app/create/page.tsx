@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
-import { useAccount } from "wagmi";
+import { useAccount, usePublicClient } from "wagmi";
 import { useLivePrices } from "@/hooks/useLivePrices";
 import { useIntervalTimer } from "@/hooks/useMarkets";
 import { useDuelFactory } from "@/hooks/useContracts";
@@ -17,6 +17,7 @@ import {
   verifyMarketAddress,
   type DreamDexMarket,
 } from "@/lib/dreamdex";
+import { FACTORY_ADDRESS } from "@/lib/contracts";
 import AssetIcon from "@/components/AssetIcon";
 
 const LiveChart = dynamic(() => import("@/components/LiveChart"), { ssr: false });
@@ -41,6 +42,7 @@ export default function CreateDuelPage() {
   const [stake, setStake] = useState<number>(0.5);
   const [customStake, setCustomStake] = useState("");
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [cloneAddress, setCloneAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedMarket, setSelectedMarket] = useState<DreamDexMarket | null>(null);
   const [marketLoading, setMarketLoading] = useState(true);
@@ -49,6 +51,7 @@ export default function CreateDuelPage() {
   const { createDuel, isPending } = useDuelFactory();
   const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
   const timer = useIntervalTimer(selectedInterval);
+  const publicClient = usePublicClient();
 
   // Fetch selected market from DreamDEX — only when asset or interval changes
   useEffect(() => {
@@ -94,11 +97,11 @@ export default function CreateDuelPage() {
   }, [asset, timer.secondsLeft, selectedMarket]);
 
   const handleCreate = useCallback(async () => {
-    if (!isValid || !selectedMarket) return;
+    if (!isValid || !selectedMarket || !publicClient) return;
     setError(null);
     setVerifying(true);
     try {
-      const verification = await verifyMarketAddress(selectedMarket.marketAddress);
+      const verification = await verifyMarketAddress(selectedMarket.marketAddress, publicClient);
       if (!verification.valid) {
         setError(verification.error || "Market verification failed");
         setVerifying(false);
@@ -106,15 +109,34 @@ export default function CreateDuelPage() {
       }
 
       const marketAddress = selectedMarket.marketAddress;
+      const marketId = selectedMarket.marketId;
       const deadline = INTERVAL_SEC[selectedInterval];
-      const hash = await createDuel(marketAddress, deadline, String(stakeAmount));
+      const hash = await createDuel(marketAddress, marketId, deadline, String(stakeAmount));
       setTxHash(hash);
+
+      // P5: Wait for receipt and extract clone address for direct invite link
+      try {
+        const receipt = await publicClient.waitForTransactionReceipt({ hash });
+        const duelCreatedTopic = "0x068f7dba6a893c40cac4a9566681d8fbb4ee83dd3b803d2f44adf1b85422ad5b";
+        for (const log of receipt.logs) {
+          if (
+            log.address.toLowerCase() === FACTORY_ADDRESS.toLowerCase() &&
+            log.topics[0] === duelCreatedTopic
+          ) {
+            const cloneTopic = log.topics[1];
+            if (cloneTopic) {
+              setCloneAddress("0x" + cloneTopic.slice(26));
+            }
+            break;
+          }
+        }
+      } catch {}
     } catch (e: any) {
       setError(e?.message?.includes("User rejected") ? "Transaction rejected" : "Failed to create duel");
     } finally {
       setVerifying(false);
     }
-  }, [isValid, selectedMarket, selectedInterval, stakeAmount, createDuel]);
+  }, [isValid, selectedMarket, selectedInterval, stakeAmount, createDuel, publicClient]);
 
   // Mode selection screen
   if (!mode) {
@@ -170,9 +192,11 @@ export default function CreateDuelPage() {
 
   // Success screen
   if (txHash) {
-    const inviteLink = typeof window !== "undefined"
-      ? `${window.location.origin}/arena?highlight=${txHash}`
-      : "";
+    const inviteLink = cloneAddress
+      ? `${typeof window !== "undefined" ? window.location.origin : ""}/duel/${cloneAddress}`
+      : typeof window !== "undefined"
+        ? `${window.location.origin}/arena?highlight=${txHash}`
+        : "";
 
     return (
       <div className="min-h-screen flex items-center justify-center py-8 px-4">
@@ -215,6 +239,14 @@ export default function CreateDuelPage() {
             Tx: {txHash.slice(0, 16)}...
           </a>
           <div className="flex gap-3 justify-center">
+            {cloneAddress && (
+              <a
+                href={`/duel/${cloneAddress}`}
+                className="rounded-xl bg-foam px-6 py-2.5 font-display text-sm font-bold text-carbon transition-all hover:bg-foam-dark"
+              >
+                View Duel
+              </a>
+            )}
             <a
               href="/arena"
               className="rounded-xl bg-foam px-6 py-2.5 font-display text-sm font-bold text-carbon transition-all hover:bg-foam-dark"
@@ -222,7 +254,7 @@ export default function CreateDuelPage() {
               View Arena
             </a>
             <button
-              onClick={() => { setTxHash(null); setError(null); setMode(null); }}
+              onClick={() => { setTxHash(null); setCloneAddress(null); setError(null); setMode(null); }}
               className="rounded-xl border border-white/10 bg-white/5 px-6 py-2.5 font-display text-sm font-semibold text-foam transition-all hover:bg-white/10"
             >
               Create Another

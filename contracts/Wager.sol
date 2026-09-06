@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {IBinaryMarket} from "./interfaces/IBinaryMarket.sol";
+import {IBinaryMarketsModule} from "./interfaces/IBinaryMarketsModule.sol";
 import {SomniaEventHandler, SomniaExtensions} from "./interfaces/somnia/SomniaExtensions.sol";
 
 /// @notice Per-duel escrow logic contract. Deployed once; cloned per wager via GambitFactory.
@@ -14,12 +15,16 @@ contract Wager is SomniaEventHandler {
 
     enum WagerState { CREATED, LOCKED, SETTLED, REFUNDED, CANCELLED }
 
+    /// @notice BinaryMarketsModule — the registry that maps marketId → Market contract.
+    address public constant BINARY_MARKETS_MODULE = 0x3ecC694Cef705358864a646142ac17A90E29e388;
+
     address public factory;
     address public owner;
     address public playerA;
     address public playerB;
     uint256 public stakeAmount;
     address public marketAddress;
+    bytes32 public marketId;
     uint256 public feeBps;
     address public feeRecipient;
     uint256 public joinDeadline;
@@ -54,6 +59,7 @@ contract Wager is SomniaEventHandler {
         address _playerA,
         uint256 _stakeAmount,
         address _marketAddress,
+        bytes32 _marketId,
         uint256 _feeBps,
         address _feeRecipient,
         uint256 _joinDeadline
@@ -72,6 +78,7 @@ contract Wager is SomniaEventHandler {
         playerA = _playerA;
         stakeAmount = _stakeAmount;
         marketAddress = _marketAddress;
+        marketId = _marketId;
         feeBps = _feeBps;
         feeRecipient = _feeRecipient;
         joinDeadline = _joinDeadline;
@@ -82,13 +89,20 @@ contract Wager is SomniaEventHandler {
 
     /// @notice Create a Somnia reactivity subscription for DreamDEX market resolution.
     /// @dev Called by the factory AFTER funding this clone with subscription SOMI.
-    ///      Subscribes to Resolved(uint32,uint256[]) emitted by the individual
-    ///      BinaryMarket contract. The emitter is set to marketAddress so the precompile
-    ///      only fires when THIS market resolves.
+    ///      Looks up the canonical Market contract via BinaryMarketsModule.markets(marketId)
+    ///      and subscribes to Resolved(uint32,uint256[]) emitted by THAT address — never
+    ///      trusts the directly-supplied marketAddress, which may be a CLOB reactivity
+    ///      address with no EVM code.
     /// @return success True if subscription was created, false if it failed (non-critical).
     function createSubscription() external returns (bool success) {
         require(msg.sender == factory, "!factory");
         require(subscriptionId == 0, "already subscribed");
+
+        // Resolve the canonical Market contract from BinaryMarketsModule.
+        // This is the address that emits Resolved events — NOT necessarily marketAddress.
+        address marketContract = _resolveMarketContract(marketId);
+        require(marketContract != address(0), "market not found");
+        require(_hasCode(marketContract), "market has no code");
 
         // keccak256("Resolved(uint32,uint256[])")
         // Emitted by BinaryMarket when oracle resolves the market.
@@ -102,7 +116,7 @@ contract Wager is SomniaEventHandler {
                 bytes32(0)
             ],
             origin: address(0),
-            emitter: marketAddress // watch THIS specific market contract
+            emitter: marketContract // resolved Market contract, not marketAddress
         });
 
         SomniaExtensions.SubscriptionOptions memory options = SomniaExtensions.SubscriptionOptions({
@@ -139,10 +153,9 @@ contract Wager is SomniaEventHandler {
         bytes32[] calldata eventTopics,
         bytes calldata
     ) internal override {
-        // Security: verify the event is from THIS market's BinaryMarket contract
-        require(emitter == marketAddress, "!market");
-
-        // Security: verify this is a Resolved event
+        // Security: verify this is a Resolved event.
+        // The emitter address is already filtered by the precompile subscription —
+        // only events from the resolved Market contract reach here.
         require(
             eventTopics[0] == keccak256("Resolved(uint32,uint256[])"),
             "!Resolved"
@@ -261,6 +274,37 @@ contract Wager is SomniaEventHandler {
 
     // ── Internal helpers ───────────────────────────────────
 
+    /// @dev Resolve the canonical Market contract address from BinaryMarketsModule.
+    ///      The Market contract emits Resolved events — it is NOT the same as marketAddress
+    ///      (which may be a CLOB reactivity address with no EVM code).
+    function _resolveMarketContract(bytes32 _marketId) internal view returns (address) {
+        (bool ok, bytes memory result) = BINARY_MARKETS_MODULE.staticcall(
+            abi.encodeWithSignature("markets(bytes32)", _marketId)
+        );
+        if (!ok || result.length < 320) return address(0); // 10 words * 32 bytes
+
+        // Decode the MarketRecord struct. The `market` field is at word index 8.
+        // In memory, result = <32-byte length><word0><word1>...<word13>
+        // Word 8 starts at result + 32 + (8 * 32) = result + 288
+        // The address occupies the last 20 bytes of the word (bytes 12-31).
+        address marketAddr;
+        assembly {
+            // Read word 8 and mask to get the address (lower 20 bytes)
+            marketAddr := and(
+                mload(add(result, 288)),
+                0xffffffffffffffffffffffffffffffffffffffff
+            )
+        }
+        return marketAddr;
+    }
+
+    /// @dev Check if an address has contract code deployed.
+    function _hasCode(address addr) internal view returns (bool) {
+        uint256 codeSize;
+        assembly { codeSize := extcodesize(addr) }
+        return codeSize > 0;
+    }
+
     /// @dev Core refund logic, callable from _onEvent() and refund().
     function _executeRefund() internal {
         state = WagerState.REFUNDED;
@@ -284,16 +328,17 @@ contract Wager is SomniaEventHandler {
 
     /// @dev Refund Player A only when market resolves but B never joined.
     ///      Callable from _onEvent() (reactive) or cancel() (manual after deadline).
+    /// @dev IMPORTANT: State is set AFTER the transfer succeeds.
+    ///      If the transfer fails, state stays CREATED so cancel() can be retried.
     function _executeCancelRefund() internal {
-        state = WagerState.CANCELLED;
-
         uint256 aStake = deposits[playerA];
         if (aStake > 0) {
-            deposits[playerA] = 0;
             (bool ok, ) = playerA.call{value: aStake}("");
             require(ok, "cancel refund failed");
+            deposits[playerA] = 0;
         }
 
+        state = WagerState.CANCELLED;
         _reclaimSubscriptionFund();
     }
 

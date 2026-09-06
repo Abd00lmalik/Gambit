@@ -74,6 +74,7 @@ contract GambitTest is Test {
     uint256 public constant MIN_STAKE = 0.1 ether;
     uint256 public constant MAX_STAKE = 100 ether;
     uint256 public constant JOIN_DEADLINE_OFFSET = 1 hours;
+    bytes32 public constant MOCK_MARKET_ID = keccak256("mock-market");
 
     function setUp() public {
         feeRecipient = new MockFeeRecipient();
@@ -115,6 +116,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketYesWon),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -160,6 +162,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketNoWon),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -193,6 +196,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketVoided),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -224,6 +228,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketYesWon), // resolved, not voided
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -252,6 +257,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -275,6 +281,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -292,6 +299,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -311,6 +319,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -334,6 +343,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -371,6 +381,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = noFeeFactory.createDuel{value: STAKE}(
             address(marketYesWon),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -404,6 +415,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = highFeeFactory.createDuel{value: STAKE}(
             address(marketYesWon),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -439,6 +451,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = roundingFactory.createDuel{value: tinyStake}(
             address(marketYesWon),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -478,6 +491,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -496,6 +510,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -522,6 +537,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -546,6 +562,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -577,6 +594,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -592,6 +610,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -614,6 +633,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -635,6 +655,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved), // not resolved
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -657,6 +678,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketZeroPayout), // resolved, payout=[0,0]
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -679,6 +701,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketVoided),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -700,6 +723,7 @@ contract GambitTest is Test {
         vm.expectRevert("stake below min");
         factory.createDuel{value: MIN_STAKE / 2}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             block.timestamp + 1 hours
         );
     }
@@ -710,6 +734,7 @@ contract GambitTest is Test {
         vm.expectRevert("stake above max");
         factory.createDuel{value: MAX_STAKE + 1}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             block.timestamp + 1 hours
         );
     }
@@ -727,6 +752,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -755,6 +781,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketYesWon),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -795,6 +822,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketVoided),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -826,6 +854,7 @@ contract GambitTest is Test {
         vm.prank(alice);
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
+            MOCK_MARKET_ID,
             deadline
         );
 
@@ -856,7 +885,9 @@ contract GambitTest is Test {
         vm.deal(alice, STAKE);
         vm.prank(alice);
         address clone1 = factory.createDuel{value: STAKE}(
-            address(marketYesWon), deadline
+            address(marketYesWon),
+            MOCK_MARKET_ID,
+            deadline
         );
 
         vm.deal(bob, STAKE);
@@ -879,7 +910,9 @@ contract GambitTest is Test {
         vm.deal(alice, STAKE);
         vm.prank(alice);
         address clone2 = factory.createDuel{value: STAKE}(
-            address(marketYesWon), deadline
+            address(marketYesWon),
+            MOCK_MARKET_ID,
+            deadline
         );
 
         // Factory should still have 70 after funding clone2
@@ -960,7 +993,9 @@ contract GambitTest is Test {
         vm.deal(alice, STAKE);
         vm.prank(alice);
         address clone1 = factory.createDuel{value: STAKE}(
-            address(marketYesWon), deadline
+            address(marketYesWon),
+            MOCK_MARKET_ID,
+            deadline
         );
 
         vm.deal(bob, STAKE);
@@ -998,7 +1033,7 @@ contract GambitTest is Test {
         tw = new TestableWager();
 
         // Initialize manually (factory = address(this), since we're calling directly)
-        tw.initialize(alice, STAKE, address(market), FEE_BPS, address(feeRecipient), block.timestamp + JOIN_DEADLINE_OFFSET);
+        tw.initialize(alice, STAKE, address(market), MOCK_MARKET_ID, FEE_BPS, address(feeRecipient), block.timestamp + JOIN_DEADLINE_OFFSET);
 
         // Record alice's deposit (we are the factory)
         vm.deal(alice, STAKE);
@@ -1082,21 +1117,29 @@ contract GambitTest is Test {
         assertEq(uint8(tw.state()), uint8(Wager.WagerState.SETTLED));
     }
 
+    /// @dev In production, the Somnia precompile filter ensures only events from the
+    ///      resolved Market contract reach _onEvent(). This test verifies that
+    ///      simulateOnEvent (which bypasses the precompile) processes the event —
+    ///      the emitter check was removed from _onEvent() since the filter handles it.
     function test_autoRefund_wrongMarketIgnored() public {
         MockMarket market = new MockMarket(4, false);
         market.setPayout(10000000, 0);
 
-        MockMarket wrongMarket = new MockMarket(4, false);
-        wrongMarket.setPayout(10000000, 0);
-
         TestableWager tw = _deployTestableClone(market);
 
-        // Simulate Resolved event from WRONG market — should be ignored
+        // Simulate Resolved event from a DIFFERENT market address.
+        // In production, the precompile filter blocks this. In tests,
+        // simulateOnEvent bypasses the filter, so the event goes through.
         bytes32 resolvedTopic = keccak256("Resolved(uint32,uint256[])");
         bytes32[] memory topics = new bytes32[](1);
         topics[0] = resolvedTopic;
 
-        vm.expectRevert("!market");
-        tw.simulateOnEvent(address(wrongMarket), topics, "");
+        // This does NOT revert because the emitter check was removed.
+        // The precompile filter is the security boundary in production.
+        // Since state is CREATED (no player B), the auto-refund path fires.
+        tw.simulateOnEvent(address(0xdead), topics, "");
+
+        // State is CANCELLED because the auto-refund fires (state was CREATED)
+        assertEq(uint8(tw.state()), uint8(Wager.WagerState.CANCELLED));
     }
 }

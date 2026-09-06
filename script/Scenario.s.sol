@@ -14,6 +14,7 @@ contract RunScenario is Script {
         uint256 keyB = vm.envUint("PRIVATE_KEY_B");
         address factoryAddr = vm.envAddress("FACTORY_ADDRESS");
         address marketAddr = vm.envAddress("MARKET_ADDRESS");
+        bytes32 marketId = vm.envBytes32("MARKET_ID");
 
         address playerA = vm.addr(keyA);
         address playerB = vm.addr(keyB);
@@ -23,6 +24,8 @@ contract RunScenario is Script {
         console2.log("Player B:", playerB);
         console2.log("Factory:", factoryAddr);
         console2.log("Market:", marketAddr);
+        console2.log("MarketId (hex):");
+        console2.logBytes32(marketId);
 
         uint256 stake = 0.5 ether;
         uint256 deadline = block.timestamp + 1 hours;
@@ -33,6 +36,7 @@ contract RunScenario is Script {
         vm.prank(playerA);
         address clone = GambitFactory(payable(factoryAddr)).createDuel{value: stake}(
             marketAddr,
+            marketId,
             deadline
         );
         console2.log("Duel created at:", clone);

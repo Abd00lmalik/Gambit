@@ -26,7 +26,7 @@ export function useDuelFactory() {
   const { ensureCorrectNetwork } = useEnsureCorrectNetwork();
 
   const createDuel = useCallback(
-    async (marketAddress: Address, joinDeadlineSeconds: number, stakeEth: string) => {
+    async (marketAddress: Address, marketId: string, joinDeadlineSeconds: number, stakeEth: string) => {
       if (!address) throw new Error("Wallet not connected");
       const ok = await ensureCorrectNetwork();
       if (!ok) throw new Error("Wrong network");
@@ -35,7 +35,7 @@ export function useDuelFactory() {
         address: FACTORY_ADDRESS,
         abi: FACTORY_ABI,
         functionName: "createDuel",
-        args: [marketAddress, BigInt(deadline)],
+        args: [marketAddress, marketId as `0x${string}`, BigInt(deadline)],
         value: parseEther(stakeEth),
         gas: BigInt(5000000),
       });
