@@ -10,6 +10,7 @@ import { somnia } from "@/lib/config";
 import { FACTORY_ADDRESS } from "@/lib/contracts";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
 import AssetIcon from "@/components/AssetIcon";
+import CountdownTimer from "@/components/CountdownTimer";
 
 const FILTERS = ["All", "BTC", "ETH", "Open", "Live", "Settled"] as const;
 
@@ -116,7 +117,8 @@ function ArenaContent() {
   const filtered = duels
     .filter((d) => {
       if (filter === "All") return true;
-      if (filter === "Open") return d.state === DuelState.CREATED;
+      const deadlinePassed = d.joinDeadline && Math.floor(Date.now() / 1000) > d.joinDeadline;
+      if (filter === "Open") return d.state === DuelState.CREATED && !deadlinePassed;
       if (filter === "Live") return d.state === DuelState.LOCKED;
       if (filter === "Settled") return d.state === DuelState.SETTLED;
       return true;
@@ -243,6 +245,10 @@ function DuelCardOnChain({
   const stateLabel = DUEL_STATE_LABELS[state] || "Unknown";
   const hasJoined = duel.playerB !== "0x0000000000000000000000000000000000000000";
 
+  // P3: Detect expired duels — deadline has passed but state is still CREATED
+  const deadlinePassed = duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
+  const isExpired = isOpen && deadlinePassed;
+
   const stateColors: Record<number, string> = {
     [DuelState.CREATED]: "border-teal/30 bg-teal/5 hover:border-teal/50",
     [DuelState.LOCKED]: "border-yellow-400/30 bg-yellow-400/5",
@@ -255,7 +261,9 @@ function DuelCardOnChain({
     <a
       href={`/duel/${duel.address}`}
       className={`block rounded-2xl border p-4 transition-all duration-200 group cursor-pointer ${
-        stateColors[state] || "border-white/10 bg-white/[0.03]"
+        isExpired
+          ? "border-down/20 bg-down/5 hover:border-down/30"
+          : stateColors[state] || "border-white/10 bg-white/[0.03]"
       } ${isHighlighted ? "ring-2 ring-teal shadow-lg shadow-teal/20" : ""}`}
     >
       <div className="flex items-center justify-between mb-3">
@@ -266,12 +274,13 @@ function DuelCardOnChain({
           <span className="font-body text-xs text-gray-400">Somnia</span>
         </div>
         <span className={`rounded-full border px-2.5 py-0.5 font-body text-[10px] font-medium uppercase tracking-wider ${
+          isExpired ? "bg-down/10 text-down border-down/20" :
           isOpen ? "bg-teal/10 text-teal border-teal/20" :
           isLive ? "bg-yellow-400/10 text-yellow-400 border-yellow-400/20" :
           isSettled ? "bg-up/10 text-up border-up/20" :
           "bg-white/5 text-gray-500 border-white/10"
         }`}>
-          {stateLabel}
+          {isExpired ? "Expired" : stateLabel}
         </span>
       </div>
 
@@ -309,10 +318,16 @@ function DuelCardOnChain({
       </div>
 
       <div className="pt-3 border-t border-white/5 flex items-center justify-between">
-        <span className="font-body text-[10px] text-gray-500">
-          {isOpen ? "Join before deadline" : isLive ? "Awaiting resolution" : isSettled ? "Resolved" : stateLabel}
-        </span>
-        {(isOpen || isLive) && (
+        {isExpired ? (
+          <span className="font-body text-[10px] text-down">Deadline passed</span>
+        ) : isOpen && duel.joinDeadline ? (
+          <CountdownTimer targetTimestamp={duel.joinDeadline} size="sm" variant="join" />
+        ) : (
+          <span className="font-body text-[10px] text-gray-500">
+            {isLive ? "Awaiting resolution" : isSettled ? "Resolved" : stateLabel}
+          </span>
+        )}
+        {(isOpen && !isExpired) && (
           <span className="text-teal text-xs group-hover:translate-x-1 transition-transform">→</span>
         )}
       </div>

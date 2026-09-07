@@ -6,12 +6,13 @@ import { usePublicClient } from "wagmi";
 import { somnia } from "@/lib/config";
 import { FACTORY_ADDRESS, WAGER_ABI } from "@/lib/contracts";
 
-const CHUNK = BigInt(900);
+const CHUNK = BigInt(5000);
 const MAX_RETRIES_PER_CHUNK = 3;
 const PARALLEL_BATCH = 6;
 const CLONE_READ_BATCH = 10;
-const INITIAL_RANGE = BigInt(200_000);
-const POLL_INTERVAL = 15_000;
+const INITIAL_RANGE = BigInt(50_000);
+const POLL_INTERVAL = 30_000;
+const CACHE_KEY = "gambit_last_scanned_block";
 
 export interface OnChainDuel {
   address: Address;
@@ -156,6 +157,16 @@ export function useDuelCreatedEvents() {
   const lastScannedBlock = useRef<bigint>(BigInt(0));
   const client = usePublicClient({ chainId: somnia.id });
 
+  // Load cached block on mount
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        lastScannedBlock.current = BigInt(cached);
+      }
+    } catch {}
+  }, []);
+
   const fetchDuels = useCallback(async () => {
     if (!client) return;
     if (isInitialLoad.current) setIsLoading(true);
@@ -165,10 +176,12 @@ export function useDuelCreatedEvents() {
 
       let allLogs: any[];
       if (lastScannedBlock.current === BigInt(0)) {
+        // First load: scan from latest - INITIAL_RANGE
         const from =
           latest > INITIAL_RANGE ? latest - INITIAL_RANGE : BigInt(0);
         allLogs = await parallelScan(client, from, latest);
       } else {
+        // Incremental: only scan new blocks since last scan
         const from = lastScannedBlock.current + BigInt(1);
         if (from > latest) {
           isInitialLoad.current = false;
@@ -179,6 +192,9 @@ export function useDuelCreatedEvents() {
       }
 
       lastScannedBlock.current = latest;
+      try {
+        localStorage.setItem(CACHE_KEY, latest.toString());
+      } catch {}
 
       const clones = allLogs.map((log) => log.args.clone as Address);
       const stateMap = await batchReadDuelStates(client, clones);

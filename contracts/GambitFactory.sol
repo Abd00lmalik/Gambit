@@ -16,10 +16,11 @@ contract GambitFactory {
     /// @notice BinaryMarketsModule — the registry that maps marketId → Market contract.
     address public constant BINARY_MARKETS_MODULE = 0x3ecC694Cef705358864a646142ac17A90E29e388;
 
-    /// @notice Accepted Market contract implementation (EIP-1167 impl address).
-    /// @dev Markets with older implementations (0xd12ad05b...) don't emit Resolved events
-    ///      and cannot be used for reactive settlement. Only this implementation is supported.
+    /// @notice Accepted Market contract implementations (EIP-1167 impl addresses).
+    /// @dev Newer impl emits Resolved events → reactive auto-settlement via precompile.
+    ///      Older impl does NOT emit Resolved events → manual settle() required.
     bytes20 public constant ACCEPTED_MARKET_IMPL = hex"6b2fee58f90aee79be03e417213c547526791102";
+    bytes20 public constant ACCEPTED_MARKET_IMPL_LEGACY = hex"d12ad05b02da6ecd29a855b38c7c6d25467c4754";
 
     address public immutable implementation;
     address public owner;
@@ -151,12 +152,17 @@ contract GambitFactory {
         (bool ok, bytes memory result) = BINARY_MARKETS_MODULE.staticcall(
             abi.encodeWithSignature("markets(bytes32)", _marketId)
         );
-        require(ok && result.length >= 320, "market not found in module");
+        require(ok && result.length >= 288, "market not found in module");
 
         // Decode the market address from word index 8 of the MarketRecord struct
+        // struct fields (each 32 bytes): oracleQuestionId, outcomeSlotCount, voidPolicy,
+        //   collateral, originOperatorId, originVenueId, oracleAdapter, creator, market, ...
+        // Word 8 = market address at data byte 256
+        // bytes memory layout: [32-byte length][data], so data starts at result+32
+        // Target: result + 32 + 256 = result + 288
         address marketAddr;
         assembly {
-            marketAddr := mload(add(result, add(256, 12)))
+            marketAddr := mload(add(result, 288))
         }
         require(marketAddr != address(0), "zero market address");
 
@@ -181,12 +187,47 @@ contract GambitFactory {
         }
         // The implementation address is at code[10:30] — bytes 10-29 of codeWord
         // codeWord = 363d3d373d3d3d363d73<20-byte impl>5af43d82...
-        // Shift right by 80 bits (10 bytes) to move impl to the lower 20 bytes
+        // Address occupies bits 175-16 of codeWord (big-endian uint256)
+        // Shift right by 16 bits to move address to bits 159-0 (lower 20 bytes)
         bytes20 impl;
         assembly {
-            impl := shr(80, codeWord)
+            impl := shl(96, shr(16, codeWord))
         }
-        require(impl == ACCEPTED_MARKET_IMPL, "unsupported market implementation");
+        require(impl == ACCEPTED_MARKET_IMPL || impl == ACCEPTED_MARKET_IMPL_LEGACY, "unsupported market implementation");
+    }
+
+    /// @notice Check if a marketId resolves to a reactive (newer-impl) market.
+    /// @dev Returns true if the market uses the newer implementation that emits Resolved
+    ///      events for reactive settlement. Returns false for older-impl markets that
+    ///      require manual settle().
+    function isReactiveMarket(bytes32 _marketId) external view returns (bool) {
+        uint256 moduleCodeSize;
+        assembly { moduleCodeSize := extcodesize(BINARY_MARKETS_MODULE) }
+        if (moduleCodeSize == 0) return false;
+
+        (bool ok, bytes memory result) = BINARY_MARKETS_MODULE.staticcall(
+            abi.encodeWithSignature("markets(bytes32)", _marketId)
+        );
+        if (!ok || result.length < 288) return false;
+
+        address marketAddr;
+        assembly { marketAddr := mload(add(result, 288)) }
+        if (marketAddr == address(0)) return false;
+
+        uint256 codeSize;
+        assembly { codeSize := extcodesize(marketAddr) }
+        if (codeSize < 45) return false;
+
+        bytes32 codeWord;
+        assembly {
+            let fmp := mload(0x40)
+            extcodecopy(marketAddr, fmp, 0, 32)
+            codeWord := mload(fmp)
+        }
+        bytes20 impl;
+        assembly { impl := shl(96, shr(16, codeWord)) }
+
+        return impl == ACCEPTED_MARKET_IMPL;
     }
 
     /// @notice Create a reactivity subscription for an existing duel that was created without one.

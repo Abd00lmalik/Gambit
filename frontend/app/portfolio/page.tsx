@@ -31,7 +31,12 @@ export default function PortfolioPage() {
     [userDuels]
   );
   const pendingDuels = useMemo(
-    () => userDuels.filter((d) => d.state === DuelState.CREATED),
+    () => userDuels.filter((d) => {
+      if (d.state !== DuelState.CREATED) return false;
+      // Exclude expired duels from pending tab
+      const deadlinePassed = d.joinDeadline && Math.floor(Date.now() / 1000) > d.joinDeadline;
+      return !deadlinePassed;
+    }),
     [userDuels]
   );
   const pastDuels = useMemo(
@@ -187,6 +192,10 @@ function DuelRow({
   const hasJoined =
     duel.playerB !== "0x0000000000000000000000000000000000000000";
 
+  // P3: Detect expired duels
+  const deadlinePassed = duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
+  const isExpired = isOpen && deadlinePassed;
+
   const opponent = isCreator ? duel.playerB : duel.playerA;
   const opponentShort =
     opponent !== "0x0000000000000000000000000000000000000000"
@@ -262,12 +271,17 @@ function DuelRow({
             variant="resolve"
           />
         )}
-        {isOpen && (
+        {isOpen && !isExpired && (
           <CountdownTimer
             targetTimestamp={duel.joinDeadline}
             size="sm"
             variant="join"
           />
+        )}
+        {isExpired && (
+          <span className="rounded-full bg-down/10 border border-down/20 px-2.5 py-0.5 font-body text-[10px] text-down block text-center">
+            Expired
+          </span>
         )}
         {isSettled && (
           <span className="rounded-full bg-white/5 border border-white/10 px-2.5 py-0.5 font-body text-[10px] text-gray-400 block text-center">

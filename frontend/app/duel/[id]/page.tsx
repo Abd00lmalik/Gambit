@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 import { useAccount } from "wagmi";
@@ -30,8 +30,8 @@ async function fetchMarketExpiry(marketAddress: string): Promise<number | null> 
   }
 }
 
-export default function DuelPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params) as { id: string };
+export default function DuelPage({ params }: { params: { id: string } }) {
+  const { id } = params;
   const duelAddress = id as Address;
   const { address: connectedAddress } = useAccount();
   const [marketExpiry, setMarketExpiry] = useState<number | null>(null);
@@ -69,10 +69,15 @@ export default function DuelPage({ params }: { params: Promise<{ id: string }> }
     );
   }
 
-  const state = duel.state;
+  const state = duel.state ?? DuelState.CREATED;
   const isCreator = connectedAddress?.toLowerCase() === duel.playerA?.toLowerCase();
   const isJoiner = connectedAddress?.toLowerCase() === duel.playerB?.toLowerCase();
-  const hasJoined = duel.playerB && duel.playerB !== "0x0000000000000000000000000000000000000000";
+  const hasJoined = !!duel.playerB && duel.playerB !== "0x0000000000000000000000000000000000000000";
+
+  // P1: Detect stuck duels — CREATED state, deadline passed, market resolved
+  // The reactive auto-refund should have fired but didn't (subscription missing or callback reverted)
+  const deadlinePassed = !!duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
+  const isStuck = state === DuelState.CREATED && deadlinePassed && market.isResolved;
 
   return (
     <div className="min-h-screen py-8 px-4">
@@ -84,17 +89,19 @@ export default function DuelPage({ params }: { params: Promise<{ id: string }> }
           className="text-center mb-8"
         >
           <span className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 font-body text-xs ${
+            isStuck ? "border-down/20 bg-down/5 text-down" :
             state === DuelState.CREATED ? "border-teal/20 bg-teal/5 text-teal" :
             state === DuelState.LOCKED ? "border-yellow-400/20 bg-yellow-400/5 text-yellow-400" :
             state === DuelState.SETTLED ? "border-up/20 bg-up/5 text-up" :
             "border-white/10 bg-white/5 text-gray-400"
           }`}>
             <span className={`h-1.5 w-1.5 rounded-full ${
+              isStuck ? "bg-down animate-glow-pulse" :
               state === DuelState.CREATED ? "bg-teal animate-glow-pulse" :
               state === DuelState.LOCKED ? "bg-yellow-400 animate-glow-pulse" :
               state === DuelState.SETTLED ? "bg-up" : "bg-gray-400"
             }`} />
-            {DUEL_STATE_LABELS[state ?? DuelState.CREATED]}
+            {isStuck ? "Stuck — Recovery Needed" : DUEL_STATE_LABELS[state]}
           </span>
         </motion.div>
 
@@ -169,15 +176,22 @@ export default function DuelPage({ params }: { params: Promise<{ id: string }> }
         )}
 
         {/* Countdown */}
-        {state === DuelState.CREATED && duel.joinDeadlineRemaining !== undefined && (
+        {state === DuelState.CREATED && duel.joinDeadline && duel.joinDeadlineRemaining !== undefined && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.4 }}
             className="flex flex-col items-center gap-2 glass rounded-xl p-4 mb-6"
           >
-            <span className="font-body text-xs text-gray-400">Join deadline in</span>
-            <CountdownTimer targetTimestamp={duel.joinDeadline || Math.floor(Date.now() / 1000) + duel.joinDeadlineRemaining} size="lg" variant="join" />
+            <span className="font-body text-xs text-gray-400">
+              {deadlinePassed ? "Deadline passed" : "Join deadline in"}
+            </span>
+            {!deadlinePassed && (
+              <CountdownTimer targetTimestamp={duel.joinDeadline} size="lg" variant="join" />
+            )}
+            {deadlinePassed && (
+              <span className="font-body text-sm text-down">Deadline passed</span>
+            )}
           </motion.div>
         )}
 
@@ -241,7 +255,7 @@ export default function DuelPage({ params }: { params: Promise<{ id: string }> }
           )}
 
           {/* Cancel button (only creator, only in CREATED state) */}
-          {isCreator && state === DuelState.CREATED && (
+          {isCreator && state === DuelState.CREATED && !deadlinePassed && (
             <button
               disabled={actions.isPending || isChecking}
               onClick={async () => {
@@ -263,6 +277,46 @@ export default function DuelPage({ params }: { params: Promise<{ id: string }> }
                     ? "Switch to Somnia Testnet"
                     : "Cancel Duel"}
             </button>
+          )}
+
+          {/* P1: Stuck duel recovery — market resolved but reactive auto-refund didn't fire */}
+          {isStuck && isCreator && (
+            <div className="rounded-xl border border-down/30 bg-down/5 p-4">
+              <p className="font-body text-sm text-down font-medium mb-3">
+                Auto-refund failed. The market has resolved but your stake was not returned automatically.
+                Click below to recover your funds.
+              </p>
+              <button
+                disabled={actions.isPending || isChecking}
+                onClick={async () => {
+                  try {
+                    if (!isCorrectNetwork) {
+                      await ensureCorrectNetwork();
+                      return;
+                    }
+                    await actions.cancelDuel();
+                  } catch {}
+                }}
+                className="min-h-[52px] w-full rounded-xl bg-down py-3 font-display text-base font-bold text-white transition-all hover:bg-down/80 active:scale-[0.97]"
+              >
+                {actions.isPending
+                  ? "Recovering..."
+                  : isChecking
+                    ? "Switching Network..."
+                    : !isCorrectNetwork
+                      ? "Switch to Somnia Testnet"
+                      : "Recover Funds →"}
+              </button>
+            </div>
+          )}
+
+          {/* Stuck duel — not the creator */}
+          {isStuck && !isCreator && (
+            <div className="rounded-xl border border-down/30 bg-down/5 p-4 text-center">
+              <p className="font-body text-sm text-down">
+                This duel is stuck. The creator needs to recover the funds.
+              </p>
+            </div>
           )}
 
           {/* Status messages */}
