@@ -19,6 +19,8 @@ const PRIVATE_KEY = process.env.KEEPER_PRIVATE_KEY;
 const FACTORY_ADDRESS =
   "0x4CbE0b9A94E723811e49201733Fb23d73b7c39de" as Address;
 const FACTORY_DEPLOY_BLOCK = BigInt(482279598);
+const BINARY_MARKETS_MODULE =
+  "0x3ecC694Cef705358864a646142ac17A90E29e388" as Address;
 const CHUNK = 900;
 const MAX_DUELS_PER_RUN = 50;
 
@@ -61,8 +63,11 @@ const MARKET_ABI = [
 ] as const;
 
 const FACTORY_ABI = [
-  "function markets(bytes32) view returns (tuple(bytes32 oracleQuestionId, uint8 outcomeSlotCount, uint32 voidPolicy, address collateral, bytes32 originOperatorId, bytes32 originVenueId, address oracleAdapter, address creator, address market, bytes32 slug, address resolver, uint32 opensAt, uint32 closesAt, uint8 conditionType))",
   "function cancelDuel(address clone)",
+] as const;
+
+const BINARY_MARKETS_MODULE_ABI = [
+  "function markets(bytes32) view returns (tuple(bytes32 oracleQuestionId, uint8 outcomeSlotCount, uint32 voidPolicy, address collateral, bytes32 originOperatorId, bytes32 originVenueId, address oracleAdapter, address creator, address market, bytes32 slug, address resolver, uint32 opensAt, uint32 closesAt, uint8 conditionType))",
 ] as const;
 
 const DUEL_CREATED_EVENT =
@@ -152,15 +157,16 @@ async function resolveMarket(
   marketId: `0x${string}`,
   publicClient: PublicClient
 ): Promise<Address | null> {
-  const code = await publicClient.getCode({ address: FACTORY_ADDRESS });
+  const code = await publicClient.getCode({ address: BINARY_MARKETS_MODULE });
   if (!code || code === "0x") return null;
   const c = getContract({
-    address: FACTORY_ADDRESS,
-    abi: FACTORY_ABI,
+    address: BINARY_MARKETS_MODULE,
+    abi: BINARY_MARKETS_MODULE_ABI,
     client: publicClient,
   });
   const r = await c.read.markets([marketId]);
-  return (r as any).market as Address;
+  // viem may return tuple as array (index 8 = market) or named object (.market)
+  return ((r as any).market ?? (r as any)[8]) as Address;
 }
 
 // ── Transaction helpers ──────────────────────────────────
