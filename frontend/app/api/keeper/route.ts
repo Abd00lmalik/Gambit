@@ -198,7 +198,7 @@ async function processDuel(
       info.resolvedMarketContract !== ZERO_ADDR
         ? info.resolvedMarketContract
         : await resolveMarket(info.marketId, publicClient);
-    market = await getMarketStatus(resolvedAddr, publicClient);
+    market = await getMarketStatus(resolvedAddr ?? undefined, publicClient);
   } catch {
     market = { exists: false, resolved: false, voided: false };
   }
