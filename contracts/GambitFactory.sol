@@ -247,6 +247,17 @@ contract GambitFactory {
         require(subOk, "subscription creation failed");
     }
 
+    /// @notice Cancel an expired duel from the factory. Owner-only.
+    /// @dev Calls factoryCancel() on the clone so msg.sender == factory passes the check.
+    /// @param clone Address of the Wager clone to cancel
+    function cancelDuel(address clone) external onlyOwner {
+        require(clone != address(0), "zero clone");
+        (bool ok, ) = clone.call(
+            abi.encodeWithSignature("factoryCancel()")
+        );
+        require(ok, "factoryCancel failed");
+    }
+
     /// @notice Withdraw idle STT from the factory. Owner-only.
     /// @dev Only touches the factory's own balance — funds already forwarded to live
     ///      duel clones are unaffected. Use this to recover surplus after duels settle

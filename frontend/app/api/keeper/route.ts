@@ -17,8 +17,8 @@ const RPC_URL =
   process.env.SOMNIA_RPC_URL || "https://api.infra.testnet.somnia.network";
 const PRIVATE_KEY = process.env.KEEPER_PRIVATE_KEY;
 const FACTORY_ADDRESS =
-  "0x29AC4B1Ce9F2cCC979B2261681A6F640Dcfb6542" as Address;
-const FACTORY_DEPLOY_BLOCK = BigInt(482271937);
+  "0x4CbE0b9A94E723811e49201733Fb23d73b7c39de" as Address;
+const FACTORY_DEPLOY_BLOCK = BigInt(482279598);
 const CHUNK = 900;
 const MAX_DUELS_PER_RUN = 50;
 
@@ -55,6 +55,7 @@ const MARKET_ABI = [
 
 const FACTORY_ABI = [
   "function markets(bytes32) view returns (tuple(bytes32 oracleQuestionId, uint8 outcomeSlotCount, uint32 voidPolicy, address collateral, bytes32 originOperatorId, bytes32 originVenueId, address oracleAdapter, address creator, address market, bytes32 slug, address resolver, uint32 opensAt, uint32 closesAt, uint8 conditionType))",
+  "function cancelDuel(address clone)",
 ] as const;
 
 const DUEL_CREATED_EVENT =
@@ -160,7 +161,7 @@ async function sendTx(
   walletClient: WalletClient,
   publicClient: PublicClient,
   clone: Address,
-  functionName: "settle" | "refund" | "cancel" | "factoryCancel"
+  functionName: "settle" | "refund" | "cancel"
 ) {
   const nonce = await publicClient.getTransactionCount({
     address: walletClient.account!.address,
@@ -170,6 +171,29 @@ async function sendTx(
     address: clone,
     abi: WAGER_ABI,
     functionName,
+    account: walletClient.account!,
+    nonce,
+    gas: BigInt(500000),
+  });
+  const hash = await walletClient.writeContract(request);
+  return publicClient.waitForTransactionReceipt({ hash });
+}
+
+async function sendFactoryTx(
+  walletClient: WalletClient,
+  publicClient: PublicClient,
+  functionName: "cancelDuel",
+  clone: Address
+) {
+  const nonce = await publicClient.getTransactionCount({
+    address: walletClient.account!.address,
+    blockTag: "pending",
+  });
+  const { request } = await publicClient.simulateContract({
+    address: FACTORY_ADDRESS,
+    abi: FACTORY_ABI,
+    functionName,
+    args: [clone],
     account: walletClient.account!,
     nonce,
     gas: BigInt(500000),
@@ -213,7 +237,7 @@ async function processDuel(
       `FACTORY-CANCEL ${clone} — stake: ${formatEther(info.stakeAmount)} STT, reason: ${market.resolved ? "market resolved" : "deadline passed"}`
     );
     try {
-      const r = await sendTx(walletClient, publicClient, clone, "factoryCancel");
+      const r = await sendFactoryTx(walletClient, publicClient, "cancelDuel", clone);
       log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
       return r.transactionHash;
     } catch (e: any) {
