@@ -1,7 +1,13 @@
 {
   "name": "gambit",
   "private": true,
+  "type": "module",
   "scripts": {
-    "install:all": "npm install && cd frontend && npm install"
+    "install:all": "npm install && cd frontend && npm install",
+    "keeper": "node scripts/keeper.mjs"
+  },
+  "dependencies": {
+    "next": "14.1.0",
+    "viem": "^2.0.0"
   }
 }
