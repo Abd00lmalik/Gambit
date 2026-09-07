@@ -185,8 +185,8 @@ export function useDuelCreatedEvents() {
       pollCount.current += 1;
 
       let allLogs: any[];
-      if (lastScannedBlock.current === BigInt(0) || shouldFullResync) {
-        // First load OR periodic full resync: scan from latest - INITIAL_RANGE
+      if (isInitialLoad.current || lastScannedBlock.current === BigInt(0) || shouldFullResync) {
+        // Initial load OR periodic full resync: scan from latest - INITIAL_RANGE
         const from =
           latest > INITIAL_RANGE ? latest - INITIAL_RANGE : BigInt(0);
         if (shouldFullResync) {
@@ -218,8 +218,8 @@ export function useDuelCreatedEvents() {
 
       const newDuels = logsToDuels(allLogs, stateMap, assetMap);
 
-      if (lastScannedBlock.current === latest && isInitialLoad.current) {
-        setDuels(newDuels.reverse());
+      if (isInitialLoad.current) {
+        setDuels(newDuels.sort((a, b) => b.joinDeadline - a.joinDeadline));
       } else {
         setDuels((prev) => {
           const existing = new Map(prev.map((d) => [d.address, d]));
