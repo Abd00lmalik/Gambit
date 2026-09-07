@@ -22,6 +22,13 @@ const FACTORY_DEPLOY_BLOCK = BigInt(482279598);
 const CHUNK = 900;
 const MAX_DUELS_PER_RUN = 50;
 
+// All known factories (for event scanning)
+const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
+  { address: "0x4CbE0b9A94E723811e49201733Fb23d73b7c39de" as Address, deployBlock: BigInt(482279598) },
+  { address: "0x29AC4B1Ce9F2cCC979B2261681A6F640Dcfb6542" as Address, deployBlock: BigInt(482271937) },
+  { address: "0x7B1A880EDC070FDF6a484DAEbF72e3143e68A9Ea" as Address, deployBlock: BigInt(482119325) },
+];
+
 // ── Chain ────────────────────────────────────────────────
 const somniaChain = defineChain({
   id: 50312,
@@ -183,6 +190,7 @@ async function sendFactoryTx(
   walletClient: WalletClient,
   publicClient: PublicClient,
   functionName: "cancelDuel",
+  factoryAddr: Address,
   clone: Address
 ) {
   const nonce = await publicClient.getTransactionCount({
@@ -190,7 +198,7 @@ async function sendFactoryTx(
     blockTag: "pending",
   });
   const { request } = await publicClient.simulateContract({
-    address: FACTORY_ADDRESS,
+    address: factoryAddr,
     abi: FACTORY_ABI,
     functionName,
     args: [clone],
@@ -205,6 +213,7 @@ async function sendFactoryTx(
 // ── Core logic ───────────────────────────────────────────
 async function processDuel(
   clone: Address,
+  factoryAddr: Address,
   publicClient: PublicClient,
   walletClient: WalletClient
 ): Promise<string | null> {
@@ -237,7 +246,7 @@ async function processDuel(
       `FACTORY-CANCEL ${clone} — stake: ${formatEther(info.stakeAmount)} STT, reason: ${market.resolved ? "market resolved" : "deadline passed"}`
     );
     try {
-      const r = await sendFactoryTx(walletClient, publicClient, "cancelDuel", clone);
+      const r = await sendFactoryTx(walletClient, publicClient, "cancelDuel", factoryAddr, clone);
       log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
       return r.transactionHash;
     } catch (e: any) {
@@ -282,35 +291,37 @@ async function scanAndProcess(
   walletClient: WalletClient
 ) {
   const latest = await publicClient.getBlockNumber();
-  const clones: Address[] = [];
+  const clones: { clone: Address; factory: Address }[] = [];
 
-  // Scan all DuelCreated events from factory deploy block
-  for (
-    let start = Number(FACTORY_DEPLOY_BLOCK);
-    start <= Number(latest);
-    start += CHUNK
-  ) {
-    const end = Math.min(start + CHUNK - 1, Number(latest));
-    try {
-      const logs = await publicClient.getLogs({
-        address: FACTORY_ADDRESS,
-        event: DUEL_CREATED_EVENT,
-        fromBlock: BigInt(start),
-        toBlock: BigInt(end),
-      });
-      for (const l of logs) {
-        if (l.args.clone) clones.push(l.args.clone);
+  // Scan DuelCreated events from ALL known factories
+  for (const factory of KNOWN_FACTORIES) {
+    for (
+      let start = Number(factory.deployBlock);
+      start <= Number(latest);
+      start += CHUNK
+    ) {
+      const end = Math.min(start + CHUNK - 1, Number(latest));
+      try {
+        const logs = await publicClient.getLogs({
+          address: factory.address,
+          event: DUEL_CREATED_EVENT,
+          fromBlock: BigInt(start),
+          toBlock: BigInt(end),
+        });
+        for (const l of logs) {
+          if (l.args.clone) clones.push({ clone: l.args.clone, factory: factory.address });
+        }
+      } catch (e: any) {
+        log(`  getLogs warn ${factory.address.slice(0, 10)}... ${start}-${end}: ${e.message?.slice(0, 60)}`);
       }
-    } catch (e: any) {
-      log(`  getLogs warn ${start}-${end}: ${e.message?.slice(0, 60)}`);
     }
   }
 
   log(`Scanned to block ${latest} — ${clones.length} total duel(s)`);
 
   let actions = 0;
-  for (const clone of clones.slice(0, MAX_DUELS_PER_RUN)) {
-    const tx = await processDuel(clone, publicClient, walletClient);
+  for (const { clone, factory } of clones.slice(0, MAX_DUELS_PER_RUN)) {
+    const tx = await processDuel(clone, factory, publicClient, walletClient);
     if (tx) actions++;
   }
 
