@@ -15,6 +15,8 @@ import {
   FACTORY_ABI,
   WAGER_ABI,
   DREAMDEX_ABI,
+  BINARY_MARKETS_MODULE_ADDRESS,
+  BINARY_MARKETS_MODULE_ABI,
   DuelState,
 } from "@/lib/contracts";
 import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
@@ -213,6 +215,13 @@ export function useDuelReads(duelAddress: Address | undefined) {
     query: { enabled: !!duelAddress },
   });
 
+  const marketId = useReadContract({
+    address: duelAddress,
+    abi: WAGER_ABI,
+    functionName: "marketId",
+    query: { enabled: !!duelAddress },
+  });
+
   const state = useReadContract({
     address: duelAddress,
     abi: WAGER_ABI,
@@ -269,6 +278,7 @@ export function useDuelReads(duelAddress: Address | undefined) {
     playerB: playerB.data as Address | undefined,
     stakeAmount: stakeAmount.data ? formatEther(stakeAmount.data) : undefined,
     marketAddress: marketAddress.data as Address | undefined,
+    marketId: (marketId.data as `0x${string}`) || undefined,
     state: duelState,
     pot: getPot.data ? formatEther(getPot.data) : undefined,
     joinDeadline: joinDeadline.data ? Number(joinDeadline.data) : undefined,
@@ -310,6 +320,32 @@ export function useFactoryReads() {
     feeRecipient: feeRecipient.data as Address | undefined,
     minStake: minStake.data ? formatEther(minStake.data) : undefined,
     maxStake: maxStake.data ? formatEther(maxStake.data) : undefined,
+  };
+}
+
+/**
+ * Resolves the canonical Market contract address from a Wager's marketId.
+ * The Wager stores both `marketAddress` (CLOB listing address, may have no EVM code)
+ * and `marketId` (bytes32). This hook calls BinaryMarketsModule.markets(marketId)
+ * and returns the `.market` field — the actual Market contract that implements
+ * IBinaryMarket (isResolved, status, isVoided, payoutNumerators).
+ */
+export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
+  const record = useReadContract({
+    address: BINARY_MARKETS_MODULE_ADDRESS,
+    abi: BINARY_MARKETS_MODULE_ABI,
+    functionName: "markets",
+    args: marketId ? [marketId] : undefined,
+    query: { enabled: !!marketId },
+  });
+
+  // The .market field is at index 8 in the MarketRecord tuple
+  const resolved = record.data as any;
+  const marketAddress = resolved?.[8] as Address | undefined;
+
+  return {
+    resolvedMarketAddress: marketAddress,
+    isLoading: record.isLoading,
   };
 }
 

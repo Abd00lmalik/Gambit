@@ -2,6 +2,7 @@ export const FACTORY_ADDRESS = "0x82FdD694AF8a75990C16aA46093EfF4006e5589d" as c
 export const IMPLEMENTATION_ADDRESS = "0xf49E3BdFA8c34355505Eb0d5BC4DdeA6ec8ADE55" as const;
 export const FEE_RECIPIENT = "0x25265b9dBEb6c653b0CA281110Bb0697a9685107" as const;
 export const DEX_EVENT_CONTRACTS_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
+export const BINARY_MARKETS_MODULE_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
 export const VENUE_ID_TESTNET = "0x679795a0195a1b76cdebb7c51d74e058aee92919b8c3389af86ef24535e8a28c" as const;
 export const POOL_FACTORY_ADDRESS = "0x0000000000000000000000000000000000000000" as const; // Deploy after contract deployment
 
@@ -406,6 +407,37 @@ export const DREAMDEX_ABI = [
     name: "status",
     inputs: [],
     outputs: [{ name: "", type: "uint8" }],
+    stateMutability: "view",
+  },
+] as const;
+
+export const BINARY_MARKETS_MODULE_ABI = [
+  {
+    type: "function",
+    name: "markets",
+    inputs: [{ name: "marketId", type: "bytes32" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "oracleQuestionId", type: "uint256" },
+          { name: "outcomeSlotCount", type: "uint8" },
+          { name: "voidPolicy", type: "uint8" },
+          { name: "collateral", type: "address" },
+          { name: "originOperatorId", type: "uint32" },
+          { name: "originVenueId", type: "bytes32" },
+          { name: "oracleAdapter", type: "address" },
+          { name: "creator", type: "address" },
+          { name: "market", type: "address" },
+          { name: "pool", type: "address" },
+          { name: "yesId", type: "uint256" },
+          { name: "noId", type: "uint256" },
+          { name: "tradingStart", type: "uint64" },
+          { name: "expiry", type: "uint64" },
+        ],
+      },
+    ],
     stateMutability: "view",
   },
 ] as const;

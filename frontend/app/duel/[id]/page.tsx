@@ -10,7 +10,7 @@ import CountdownTimer from "@/components/CountdownTimer";
 import SettlementLatency from "@/components/SettlementLatency";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
 import OracleVerification from "@/components/OracleVerification";
-import { useDuelReads, useDuelActions, useMarketStatus } from "@/hooks/useContracts";
+import { useDuelReads, useDuelActions, useMarketStatus, useResolvedMarketAddress } from "@/hooks/useContracts";
 import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
 import { DuelState, DUEL_STATE_LABELS, DUEL_STATE_COLORS } from "@/lib/contracts";
 import { fetchMarketByAddress, DreamDexMarket } from "@/lib/dreamdex";
@@ -88,7 +88,10 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const [marketLoading, setMarketLoading] = useState(true);
 
   const duel = useDuelReads(duelAddress);
-  const market = useMarketStatus(duel.marketAddress);
+  const { resolvedMarketAddress } = useResolvedMarketAddress(duel.marketId);
+  // Use resolved Market contract for on-chain IBinaryMarket reads (isResolved, status, etc.)
+  // NOT the raw CLOB listing address from duel.marketAddress, which may have no EVM code
+  const market = useMarketStatus(resolvedMarketAddress);
   const actions = useDuelActions(duelAddress);
   const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
 
@@ -154,7 +157,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const autoSettle = useAutoSettle({
     duelAddress,
     state,
-    marketAddress: duel.marketAddress,
+    marketAddress: resolvedMarketAddress,
     marketIsResolved: market.isResolved ?? false,
     settleDuel: actions.settleDuel,
     isSettling: actions.isPending,

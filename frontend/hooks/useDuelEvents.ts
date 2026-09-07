@@ -6,7 +6,7 @@ import { usePublicClient } from "wagmi";
 import { somnia } from "@/lib/config";
 import { FACTORY_ADDRESS, WAGER_ABI } from "@/lib/contracts";
 
-const CHUNK = BigInt(5000);
+const CHUNK = BigInt(900);
 const MAX_RETRIES_PER_CHUNK = 3;
 const PARALLEL_BATCH = 6;
 const CLONE_READ_BATCH = 10;

@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
 import { usePublicClient, useReadContract } from "wagmi";
 import { somnia, config } from "@/lib/config";
-import { FACTORY_ADDRESS, WAGER_ABI, DREAMDEX_ABI } from "@/lib/contracts";
+import { FACTORY_ADDRESS, WAGER_ABI, DREAMDEX_ABI, BINARY_MARKETS_MODULE_ADDRESS, BINARY_MARKETS_MODULE_ABI } from "@/lib/contracts";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
 import AssetIcon from "@/components/AssetIcon";
 import CountdownTimer from "@/components/CountdownTimer";
@@ -147,9 +147,28 @@ function ArenaContent() {
         if (settledCheckRef.current.has(duelKey)) continue;
 
         try {
-          // Check if market is resolved
+          // Read marketId from Wager, then resolve the canonical Market contract
+          // duel.marketAddress is the CLOB listing address (may have no EVM code)
+          const marketIdResult = await client.readContract({
+            address: duel.address as `0x${string}`,
+            abi: WAGER_ABI,
+            functionName: "marketId",
+          });
+
+          const recordResult = await client.readContract({
+            address: BINARY_MARKETS_MODULE_ADDRESS,
+            abi: BINARY_MARKETS_MODULE_ABI,
+            functionName: "markets",
+            args: [marketIdResult],
+          });
+
+          // .market is at index 8 in the MarketRecord tuple
+          const resolvedMarketAddress = (recordResult as any)?.[8];
+          if (!resolvedMarketAddress) continue;
+
+          // Check if market is resolved using the resolved Market contract
           const isResolved = await client.readContract({
-            address: duel.marketAddress as `0x${string}`,
+            address: resolvedMarketAddress,
             abi: DREAMDEX_ABI,
             functionName: "isResolved",
           });
