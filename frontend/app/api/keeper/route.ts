@@ -18,7 +18,7 @@ const RPC_URL =
 const PRIVATE_KEY = process.env.KEEPER_PRIVATE_KEY;
 const FACTORY_ADDRESS =
   "0x7B1A880EDC070FDF6a484DAEbF72e3143e68A9Ea" as Address;
-const FACTORY_DEPLOY_BLOCK = 482119325n;
+const FACTORY_DEPLOY_BLOCK = BigInt(482119325);
 const CHUNK = 900;
 const MAX_DUELS_PER_RUN = 50;
 
@@ -171,7 +171,7 @@ async function sendTx(
     functionName,
     account: walletClient.account!,
     nonce,
-    gas: 500000n,
+    gas: BigInt(500000),
   });
   const hash = await walletClient.writeContract(request);
   return publicClient.waitForTransactionReceipt({ hash });
@@ -236,7 +236,7 @@ async function processDuel(
     }
     if (market.resolved) {
       log(
-        `SETTLE ${clone} — pot: ${formatEther(info.stakeAmount * 2n)} STT`
+        `SETTLE ${clone} — pot: ${formatEther(info.stakeAmount * BigInt(2))} STT`
       );
       try {
         const r = await sendTx(walletClient, publicClient, clone, "settle");
