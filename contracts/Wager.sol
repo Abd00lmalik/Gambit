@@ -39,6 +39,12 @@ contract Wager is SomniaEventHandler {
     /// @notice Block timestamp when _onEvent() triggered settlement.
     uint256 public settlementTriggeredAt;
 
+    /// @notice Resolved Market contract address (from BinaryMarketsModule.markets(marketId)).
+    /// @dev Stored once at initialize() time. Used by settle(), refund(), and _onEvent()
+    ///      to read isResolved/isVoided/payoutNumerators — never reads from raw marketAddress,
+    ///      which may be a CLOB reactivity address with no EVM code.
+    address public resolvedMarketContract;
+
     /// @notice Emitted when reactive settlement fires.
     event ReactiveSettled(uint256 timestamp, uint256 blockNumber);
     /// @notice Emitted when reactive void-refund fires.
@@ -83,14 +89,22 @@ contract Wager is SomniaEventHandler {
         feeRecipient = _feeRecipient;
         joinDeadline = _joinDeadline;
         state = WagerState.CREATED;
+
+        // Resolve the canonical Market contract ONCE and store it.
+        // In production: BinaryMarketsModule exists → resolves to the real Market contract.
+        // In tests: no module → fallback to marketAddress (the MockMarket address).
+        address resolved = _resolveMarketContract(_marketId);
+        if (resolved == address(0)) {
+            resolved = _marketAddress;
+        }
+        resolvedMarketContract = resolved;
         // Note: reactivity subscription is created AFTER factory funds this clone
         // via createSubscription(), because the precompile requires >= 32 SOMI balance.
     }
 
     /// @notice Create a Somnia reactivity subscription for DreamDEX market resolution.
     /// @dev Called by the factory AFTER funding this clone with subscription SOMI.
-    ///      Looks up the canonical Market contract via BinaryMarketsModule.markets(marketId)
-    ///      and subscribes to Resolved(uint32,uint256[]) emitted by THAT address — never
+    ///      Uses the resolved Market contract stored at initialize() time — never
     ///      trusts the directly-supplied marketAddress, which may be a CLOB reactivity
     ///      address with no EVM code.
     /// @return success True if subscription was created, false if it failed (non-critical).
@@ -98,9 +112,8 @@ contract Wager is SomniaEventHandler {
         require(msg.sender == factory, "!factory");
         require(subscriptionId == 0, "already subscribed");
 
-        // Resolve the canonical Market contract from BinaryMarketsModule.
-        // This is the address that emits Resolved events — NOT necessarily marketAddress.
-        address marketContract = _resolveMarketContract(marketId);
+        // Use the pre-resolved Market contract (set at initialize() time).
+        address marketContract = resolvedMarketContract;
         require(marketContract != address(0), "market not found");
         require(_hasCode(marketContract), "market has no code");
 
@@ -176,7 +189,7 @@ contract Wager is SomniaEventHandler {
         settlementTriggeredAt = block.timestamp;
 
         // Check if the market was voided (oracle failure, dispute, etc.)
-        IBinaryMarket market = IBinaryMarket(marketAddress);
+        IBinaryMarket market = IBinaryMarket(resolvedMarketContract);
         if (market.isVoided()) {
             // Voided: both players get their stake back
             _executeRefund();
@@ -234,7 +247,7 @@ contract Wager is SomniaEventHandler {
     ///      After settlement, unsubscribes from reactivity and sweeps leftover
     ///      subscription fund back to the factory for reuse.
     function settle() public inState(WagerState.LOCKED) {
-        IBinaryMarket market = IBinaryMarket(marketAddress);
+        IBinaryMarket market = IBinaryMarket(resolvedMarketContract);
         require(market.isResolved(), "not resolved");
         require(!market.isVoided(), "voided use refund()");
 
@@ -267,7 +280,7 @@ contract Wager is SomniaEventHandler {
 
     /// @notice Refund both players when market is voided.
     function refund() external inState(WagerState.LOCKED) {
-        IBinaryMarket market = IBinaryMarket(marketAddress);
+        IBinaryMarket market = IBinaryMarket(resolvedMarketContract);
         require(market.isVoided(), "not voided");
         _executeRefund();
     }
