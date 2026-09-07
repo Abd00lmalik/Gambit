@@ -95,6 +95,18 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const actions = useDuelActions(duelAddress);
   const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
 
+  // P1: Auto-trigger settle() for older-impl markets when market resolves
+  // This is permissionless - anyone visiting the page can trigger it
+  // MUST be called before any early returns (Rules of Hooks)
+  const autoSettle = useAutoSettle({
+    duelAddress,
+    state: duel.state,
+    marketAddress: resolvedMarketAddress,
+    marketIsResolved: market.isResolved ?? false,
+    settleDuel: actions.settleDuel,
+    isSettling: actions.isPending,
+  });
+
   // Fetch market data from DreamDEX indexer (reuses Create Duel logic)
   useEffect(() => {
     if (!duel.marketAddress) return;
@@ -151,17 +163,6 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   // The reactive auto-refund should have fired but didn't (subscription missing or callback reverted)
   const deadlinePassed = !!duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
   const isStuck = state === DuelState.CREATED && deadlinePassed && market.isResolved;
-
-  // P1: Auto-trigger settle() for older-impl markets when market resolves
-  // This is permissionless - anyone visiting the page can trigger it
-  const autoSettle = useAutoSettle({
-    duelAddress,
-    state,
-    marketAddress: resolvedMarketAddress,
-    marketIsResolved: market.isResolved ?? false,
-    settleDuel: actions.settleDuel,
-    isSettling: actions.isPending,
-  });
 
   return (
     <div className="min-h-screen py-8 px-4">

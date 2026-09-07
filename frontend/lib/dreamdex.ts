@@ -579,6 +579,39 @@ export async function fetchMarketByAddress(marketAddress: Address): Promise<Drea
 return null;
 }
 
+// Batch-fetch asset for multiple market addresses (returns Map<marketAddressLower, asset>)
+export async function fetchMarketAssets(addresses: string[]): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  if (unique.length === 0) return result;
+
+  // GraphQL _in filter — batch up to 50 at a time
+  const BATCH = 50;
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const batch = unique.slice(i, i + BATCH);
+    const addrList = batch.map((a) => `"${a}"`).join(",");
+    const query = `{
+      Market(where: {marketAddress: {_in: [${addrList}]}}, limit: ${batch.length}) {
+        marketAddress asset
+      }
+    }`;
+
+    for (const url of [PROD_GRAPHQL_URL, DEV_GRAPHQL_URL]) {
+      try {
+        const data = await gqlRaw(url, query);
+        const markets = data.Market ?? [];
+        for (const m of markets) {
+          if (m.marketAddress && m.asset) {
+            result.set(m.marketAddress.toLowerCase(), m.asset);
+          }
+        }
+        if (markets.length > 0) break;
+      } catch {}
+    }
+  }
+  return result;
+}
+
 export async function fetchAvailableMarkets(): Promise<MarketCombo[]> {
   const now = Math.floor(Date.now() / 1000);
   const markets = await queryBothIndexers(

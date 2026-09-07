@@ -5,6 +5,7 @@ import { type Address, formatEther } from "viem";
 import { usePublicClient } from "wagmi";
 import { somnia } from "@/lib/config";
 import { FACTORY_ADDRESS, WAGER_ABI } from "@/lib/contracts";
+import { fetchMarketAssets } from "@/lib/dreamdex";
 
 const CHUNK = BigInt(900);
 const MAX_RETRIES_PER_CHUNK = 3;
@@ -23,6 +24,7 @@ export interface OnChainDuel {
   marketAddress: Address;
   joinDeadline: number;
   state: number;
+  asset: string;
 }
 
 const DUEL_CREATED_EVENT = {
@@ -133,7 +135,8 @@ async function batchReadDuelStates(
 
 function logsToDuels(
   logs: any[],
-  stateMap: Map<Address, { state: number; playerB: Address }>
+  stateMap: Map<Address, { state: number; playerB: Address }>,
+  assetMap: Map<string, string>
 ): OnChainDuel[] {
   return logs.map((log) => {
     const { clone, playerA, stakeAmount, marketAddress, joinDeadline } =
@@ -147,6 +150,7 @@ function logsToDuels(
       marketAddress: marketAddress!,
       joinDeadline: Number(joinDeadline),
       state: onChain?.state ?? 0,
+      asset: assetMap.get((marketAddress as string)?.toLowerCase()) ?? "BTC",
     };
   });
 }
@@ -207,7 +211,12 @@ export function useDuelCreatedEvents() {
 
       const clones = allLogs.map((log) => log.args.clone as Address);
       const stateMap = await batchReadDuelStates(client, clones);
-      const newDuels = logsToDuels(allLogs, stateMap);
+
+      // Batch-fetch asset for all unique market addresses
+      const marketAddresses = allLogs.map((log) => log.args.marketAddress as string);
+      const assetMap = await fetchMarketAssets(marketAddresses);
+
+      const newDuels = logsToDuels(allLogs, stateMap, assetMap);
 
       if (lastScannedBlock.current === latest && isInitialLoad.current) {
         setDuels(newDuels.reverse());

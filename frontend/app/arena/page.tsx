@@ -219,6 +219,9 @@ function ArenaContent() {
   const filtered = duels
     .filter((d) => {
       if (filter === "All") return true;
+      // Asset filter
+      if (filter === "BTC" || filter === "ETH") return d.asset === filter;
+      // Status filter
       const deadlinePassed = d.joinDeadline && Math.floor(Date.now() / 1000) > d.joinDeadline;
       if (filter === "Open") return d.state === DuelState.CREATED && !deadlinePassed;
       if (filter === "Live") return d.state === DuelState.LOCKED;
@@ -369,11 +372,11 @@ function DuelCardOnChain({
       } ${isHighlighted ? "ring-2 ring-teal shadow-lg shadow-teal/20" : ""}`}
     >
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500/15 text-orange-400 text-xs font-bold">
-            <AssetIcon asset="BTC" className="h-4 w-4" />
-          </div>
-          <span className="font-body text-xs text-gray-400">Somnia</span>
+          <div className="flex items-center gap-2">
+            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-500/15 text-orange-400 text-xs font-bold">
+              <AssetIcon asset={duel.asset || "BTC"} className="h-4 w-4" />
+            </div>
+            <span className="font-body text-xs text-gray-400">{duel.asset || "BTC"} · Somnia</span>
         </div>
         <span className={`rounded-full border px-2.5 py-0.5 font-body text-[10px] font-medium uppercase tracking-wider ${
           isExpired ? "bg-down/10 text-down border-down/20" :
