@@ -273,7 +273,9 @@ async function scanAndProcess(
         fromBlock: BigInt(start),
         toBlock: BigInt(end),
       });
-      for (const l of logs) clones.push(l.args.clone);
+      for (const l of logs) {
+        if (l.args.clone) clones.push(l.args.clone);
+      }
     } catch (e: any) {
       log(`  getLogs warn ${start}-${end}: ${e.message?.slice(0, 60)}`);
     }
