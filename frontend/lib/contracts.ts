@@ -1,5 +1,5 @@
-export const FACTORY_ADDRESS = "0x7B1A880EDC070FDF6a484DAEbF72e3143e68A9Ea" as const;
-export const IMPLEMENTATION_ADDRESS = "0xf6a103dec0b580ef785d2ecc30956759da6028bB" as const;
+export const FACTORY_ADDRESS = "0x29AC4B1Ce9F2cCC979B2261681A6F640Dcfb6542" as const;
+export const IMPLEMENTATION_ADDRESS = "0xE154043A0d59412C87DF67B802C9e27858A0682a" as const;
 export const FEE_RECIPIENT = "0x25265b9dBEb6c653b0CA281110Bb0697a9685107" as const;
 export const DEX_EVENT_CONTRACTS_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
 export const BINARY_MARKETS_MODULE_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
@@ -192,6 +192,13 @@ export const WAGER_ABI = [
     inputs: [],
     outputs: [{ name: "", type: "bytes32" }],
     stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "factoryCancel",
+    inputs: [],
+    outputs: [],
+    stateMutability: "nonpayable",
   },
   {
     type: "function",

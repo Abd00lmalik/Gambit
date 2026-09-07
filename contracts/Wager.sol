@@ -55,6 +55,8 @@ contract Wager is SomniaEventHandler {
     event SubscriptionCreated(uint256 subscriptionId);
     /// @notice Emitted when subscription is cancelled.
     event SubscriptionCancelled(uint256 subscriptionId);
+    /// @notice Emitted when factory cancels an expired CREATED duel.
+    event FactoryCancelled(uint256 timestamp);
 
     // ── Initialization ─────────────────────────────────────
 
@@ -359,6 +361,16 @@ contract Wager is SomniaEventHandler {
     function cancel() external inState(WagerState.CREATED) onlyOwner {
         require(block.timestamp > joinDeadline, "deadline not reached");
         _executeCancelRefund();
+    }
+
+    /// @notice Factory-initiated cancel for expired CREATED duels.
+    /// @dev Allows the keeper to automatically refund creators when deadline passes
+    ///      and nobody joined. Permissionless after deadline — prevents stuck funds.
+    function factoryCancel() external inState(WagerState.CREATED) {
+        require(msg.sender == factory, "!factory");
+        require(block.timestamp > joinDeadline, "deadline not reached");
+        _executeCancelRefund();
+        emit FactoryCancelled(block.timestamp);
     }
 
     /// @notice Cancel the reactivity subscription (e.g. if duel is cancelled/refunded).

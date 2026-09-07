@@ -17,8 +17,8 @@ const RPC_URL =
   process.env.SOMNIA_RPC_URL || "https://api.infra.testnet.somnia.network";
 const PRIVATE_KEY = process.env.KEEPER_PRIVATE_KEY;
 const FACTORY_ADDRESS =
-  "0x7B1A880EDC070FDF6a484DAEbF72e3143e68A9Ea" as Address;
-const FACTORY_DEPLOY_BLOCK = BigInt(482119325);
+  "0x29AC4B1Ce9F2cCC979B2261681A6F640Dcfb6542" as Address;
+const FACTORY_DEPLOY_BLOCK = BigInt(482271937);
 const CHUNK = 900;
 const MAX_DUELS_PER_RUN = 50;
 
@@ -45,6 +45,7 @@ const WAGER_ABI = [
   "function settle()",
   "function refund()",
   "function cancel()",
+  "function factoryCancel()",
 ] as const;
 
 const MARKET_ABI = [
@@ -159,7 +160,7 @@ async function sendTx(
   walletClient: WalletClient,
   publicClient: PublicClient,
   clone: Address,
-  functionName: "settle" | "refund" | "cancel"
+  functionName: "settle" | "refund" | "cancel" | "factoryCancel"
 ) {
   const nonce = await publicClient.getTransactionCount({
     address: walletClient.account!.address,
@@ -206,13 +207,13 @@ async function processDuel(
   const now = BigInt(Math.floor(Date.now() / 1000));
   const deadlinePassed = now > info.joinDeadline;
 
-  // CREATED: unjoined — cancel if resolved or expired
+  // CREATED: unjoined — factory-cancel if resolved or expired
   if (info.state === CREATED && (market.resolved || deadlinePassed)) {
     log(
-      `CANCEL ${clone} — stake: ${formatEther(info.stakeAmount)} STT, reason: ${market.resolved ? "market resolved" : "deadline passed"}`
+      `FACTORY-CANCEL ${clone} — stake: ${formatEther(info.stakeAmount)} STT, reason: ${market.resolved ? "market resolved" : "deadline passed"}`
     );
     try {
-      const r = await sendTx(walletClient, publicClient, clone, "cancel");
+      const r = await sendTx(walletClient, publicClient, clone, "factoryCancel");
       log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
       return r.transactionHash;
     } catch (e: any) {
