@@ -206,22 +206,22 @@ export default function CreateDuelPage() {
               </p>
             </button>
 
-            <button
-              onClick={() => setMode("squad")}
-              className="rounded-2xl border border-purple-500/30 bg-purple-500/5 p-6 text-left transition-all hover:border-purple-500/50 hover:bg-purple-500/10 cursor-pointer group"
-            >
-              <div className="h-12 w-12 rounded-xl bg-purple-500/15 flex items-center justify-center mb-4">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-6 text-left opacity-50 cursor-not-allowed relative">
+              <div className="absolute top-3 right-3 rounded-full bg-purple-500/20 px-2.5 py-0.5">
+                <span className="font-body text-[10px] font-semibold text-purple-400 uppercase tracking-wider">Coming Soon</span>
+              </div>
+              <div className="h-12 w-12 rounded-xl bg-purple-500/10 flex items-center justify-center mb-4">
                 <span className="text-2xl">🎯</span>
               </div>
-              <h3 className="font-display text-lg font-bold text-foam mb-1">Squad Pool</h3>
-              <p className="font-body text-sm text-gray-400">
+              <h3 className="font-display text-lg font-bold text-gray-500 mb-1">Squad Pool</h3>
+              <p className="font-body text-sm text-gray-500">
                 Invite your squad. Multiple players per side. Proportional payout.
               </p>
-            </button>
+            </div>
           </div>
 
           <p className="font-body text-xs text-gray-500 text-center mt-6">
-            Both use DreamDEX Event Contracts with auto-settlement.
+            Duels use DreamDEX Event Contracts with auto-settlement.
           </p>
         </motion.div>
       </div>

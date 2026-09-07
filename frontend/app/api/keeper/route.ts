@@ -296,9 +296,15 @@ async function scanAndProcess(
 export async function GET(req: NextRequest) {
   const startTime = Date.now();
 
-  // Authenticate: Vercel cron sends CRON_SECRET; allow unauthenticated for external cron services
-  // (the keeper only calls public settle/refund/cancel — permissionless by design)
+  // Authenticate: Vercel cron sends CRON_SECRET as Bearer token.
+  // If CRON_SECRET is set, require it; otherwise allow unauthenticated (permissionless on-chain calls).
   const authHeader = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    log("UNAUTHORIZED — bad or missing CRON_SECRET");
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  log(`auth: ${cronSecret ? (authHeader ? "Bearer ✓" : "no header") : "no secret set"}`);
 
   if (!PRIVATE_KEY) {
     log("ERROR: KEEPER_PRIVATE_KEY not set");
