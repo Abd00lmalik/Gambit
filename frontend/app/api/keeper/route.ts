@@ -107,14 +107,14 @@ async function getDuelInfo(
       c.read.subscriptionFund(),
     ]);
   return {
-    state: Number(state),
-    joinDeadline: joinDl,
-    playerA: mA,
-    playerB: mB,
-    marketId: mktId,
+    state: Number(state as bigint),
+    joinDeadline: joinDl as bigint,
+    playerA: mA as Address,
+    playerB: mB as Address,
+    marketId: mktId as `0x${string}`,
     resolvedMarketContract: resolved as Address,
-    stakeAmount: stake,
-    subscriptionFund: subFund,
+    stakeAmount: stake as bigint,
+    subscriptionFund: subFund as bigint,
   };
 }
 
@@ -133,8 +133,8 @@ async function getMarketStatus(
     client: publicClient,
   });
   const [resolved, voided] = await Promise.all([
-    c.read.isResolved().catch(() => false),
-    c.read.isVoided().catch(() => false),
+    c.read.isResolved().catch(() => false) as Promise<boolean>,
+    c.read.isVoided().catch(() => false) as Promise<boolean>,
   ]);
   return { exists: true, resolved, voided };
 }
