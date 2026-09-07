@@ -13,6 +13,7 @@ const CLONE_READ_BATCH = 10;
 const INITIAL_RANGE = BigInt(50_000);
 const POLL_INTERVAL = 30_000;
 const CACHE_KEY = "gambit_last_scanned_block";
+const FULL_RESYNC_INTERVAL = 10; // Full resync every N polls
 
 export interface OnChainDuel {
   address: Address;
@@ -155,6 +156,7 @@ export function useDuelCreatedEvents() {
   const [isLoading, setIsLoading] = useState(true);
   const isInitialLoad = useRef(true);
   const lastScannedBlock = useRef<bigint>(BigInt(0));
+  const pollCount = useRef(0);
   const client = usePublicClient({ chainId: somnia.id });
 
   // Load cached block on mount
@@ -174,11 +176,18 @@ export function useDuelCreatedEvents() {
     try {
       const latest = await client.getBlockNumber();
 
+      // P4: Periodic full resync to prevent cache drift
+      const shouldFullResync = pollCount.current > 0 && pollCount.current % FULL_RESYNC_INTERVAL === 0;
+      pollCount.current += 1;
+
       let allLogs: any[];
-      if (lastScannedBlock.current === BigInt(0)) {
-        // First load: scan from latest - INITIAL_RANGE
+      if (lastScannedBlock.current === BigInt(0) || shouldFullResync) {
+        // First load OR periodic full resync: scan from latest - INITIAL_RANGE
         const from =
           latest > INITIAL_RANGE ? latest - INITIAL_RANGE : BigInt(0);
+        if (shouldFullResync) {
+          console.log(`[DuelEvents] Full resync #${pollCount.current / FULL_RESYNC_INTERVAL}: scanning from ${from} to ${latest}`);
+        }
         allLogs = await parallelScan(client, from, latest);
       } else {
         // Incremental: only scan new blocks since last scan

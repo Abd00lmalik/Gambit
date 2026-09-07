@@ -217,14 +217,14 @@ export function useDuelReads(duelAddress: Address | undefined) {
     address: duelAddress,
     abi: WAGER_ABI,
     functionName: "state",
-    query: { enabled: !!duelAddress, refetchInterval: 5000 },
+    query: { enabled: !!duelAddress, refetchInterval: 2000 },
   });
 
   const getPot = useReadContract({
     address: duelAddress,
     abi: WAGER_ABI,
     functionName: "getPot",
-    query: { enabled: !!duelAddress, refetchInterval: 5000 },
+    query: { enabled: !!duelAddress, refetchInterval: 2000 },
   });
 
   const joinDeadline = useReadContract({

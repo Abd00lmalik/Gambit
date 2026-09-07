@@ -424,6 +424,13 @@ async function verifyMarketImplementation(
 }
 
 // ── DreamDexMarket type ────────────────────────────────────────
+export interface MarketCombo {
+  asset: string;
+  intervalSec: number;
+  label: string;
+  marketCount: number;
+}
+
 export interface DreamDexMarket {
   id: string;
   marketAddress: Address;
@@ -547,11 +554,29 @@ export function getTimeRemainingForInterval(intervalSec: number): { secondsLeft:
   return { secondsLeft: boundary - now, nextBoundary: boundary };
 }
 
-export interface MarketCombo {
-  asset: string;
-  intervalSec: number;
-  label: string;
-  marketCount: number;
+export async function fetchMarketByAddress(marketAddress: Address): Promise<DreamDexMarket | null> {
+  const query = `{
+    Market(where: {marketAddress: {_eq: "${marketAddress.toLowerCase()}"}}, limit: 1) {
+      id marketAddress marketId asset question strike indexPrice
+      intervalSec expiry tradingStart clobStatus binaryPoolAddress venueId oracleQuestionId
+    }
+  }`;
+
+  for (const url of [PROD_GRAPHQL_URL, DEV_GRAPHQL_URL]) {
+    try {
+      const data = await gqlRaw(url, query);
+      const markets = data.Market ?? [];
+      if (markets.length === 0) continue;
+
+      const raw = markets[0];
+      if (!raw.marketAddress) return null;
+
+      const mapped = mapMarketRaw(raw);
+      return await enrichMarketWithPrice(mapped);
+    } catch {}
+  }
+  return null;
+return null;
 }
 
 export async function fetchAvailableMarkets(): Promise<MarketCombo[]> {

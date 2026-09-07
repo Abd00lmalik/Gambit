@@ -1,21 +1,106 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useAccount } from "wagmi";
 import { formatEther, type Address } from "viem";
 import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
+import { usePublicClient, useReadContract } from "wagmi";
+import { somnia, config } from "@/lib/config";
+import { WAGER_ABI, DREAMDEX_ABI } from "@/lib/contracts";
 import CountdownTimer from "@/components/CountdownTimer";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
 import AssetIcon from "@/components/AssetIcon";
+
+const AUTO_SETTLE_INTERVAL_MS = 30000; // Check every 30s on Portfolio page
 
 const TABS = ["Active", "Pending", "Past"] as const;
 
 export default function PortfolioPage() {
   const { address: connectedAddress } = useAccount();
   const { duels, isLoading } = useDuelCreatedEvents();
+  const client = usePublicClient({ chainId: somnia.id });
+  const settledCheckRef = useRef<Set<string>>(new Set());
 
   const [tab, setTab] = useState<(typeof TABS)[number]>("Active");
+
+  // P1: Background auto-settle check for user's duels on Portfolio page
+  useEffect(() => {
+    if (!connectedAddress || !client || isLoading || duels.length === 0) return;
+
+    let cancelled = false;
+    let intervalId: NodeJS.Timeout;
+
+    const checkAndSettle = async () => {
+      if (cancelled) return;
+
+      // Find user's duels that are LOCKED (joined)
+      const userDuels = duels.filter(
+        (d) =>
+          d.state === DuelState.LOCKED &&
+          (d.playerA?.toLowerCase() === connectedAddress.toLowerCase() ||
+            d.playerB?.toLowerCase() === connectedAddress.toLowerCase())
+      );
+
+      if (userDuels.length === 0) return;
+
+      for (const duel of userDuels) {
+        if (cancelled) break;
+        const duelKey = duel.address.toLowerCase();
+
+        // Skip if already checked and settled in this session
+        if (settledCheckRef.current.has(duelKey)) continue;
+
+        try {
+          // Check if market is resolved
+          const isResolved = await client.readContract({
+            address: duel.marketAddress as `0x${string}`,
+            abi: DREAMDEX_ABI,
+            functionName: "isResolved",
+          });
+
+          if (!isResolved) continue;
+
+          // Check if duel is already settled (state may be stale)
+          const duelState = await client.readContract({
+            address: duel.address as `0x${string}`,
+            abi: WAGER_ABI,
+            functionName: "state",
+          });
+
+          if (Number(duelState) === DuelState.SETTLED) {
+            settledCheckRef.current.add(duelKey);
+            continue;
+          }
+
+          // Trigger settle() - permissionless, anyone can call
+          console.log(`[Auto-settle] Triggering settle for ${duel.address}`);
+          const { writeContract } = await import("wagmi/actions");
+          await writeContract(config, {
+            address: duel.address as `0x${string}`,
+            abi: WAGER_ABI,
+            functionName: "settle",
+            gas: BigInt(2000000),
+          });
+          settledCheckRef.current.add(duelKey);
+        } catch (e) {
+          // Ignore - another caller may have succeeded, or user not on correct network
+          console.debug(`[Auto-settle] Failed for ${duel.address}:`, e);
+        }
+      }
+    };
+
+    // Initial check
+    checkAndSettle();
+
+    // Periodic check
+    intervalId = setInterval(checkAndSettle, AUTO_SETTLE_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [connectedAddress, client, duels, isLoading]);
 
   const userDuels = useMemo(() => {
     if (!connectedAddress) return [];
