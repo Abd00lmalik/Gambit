@@ -18,12 +18,16 @@ const RPC_URL =
 const PRIVATE_KEY = process.env.KEEPER_PRIVATE_KEY;
 const BINARY_MARKETS_MODULE =
   "0x3ecC694Cef705358864a646142ac17A90E29e388" as Address;
-const CHUNK = 900;
-const MAX_DUELS_PER_RUN = 50;
-const RPC_TIMEOUT_MS = 8_000; // Per-RPC-call timeout
+const CHUNK = 500;
+const MAX_DUELS_PER_RUN = 30;
+const RPC_TIMEOUT_MS = 4_000; // Per-RPC-call timeout (must finish under 25s total)
 
 // All known factories (for event scanning)
 const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
+  { address: "0xEf261Ee4501A50F989F1b0C3aC58DF0E27d15444" as Address, deployBlock: BigInt(483089000) }, // v24 — current (pre-deployed Wager impl, restored _resolveMarketContract)
+  { address: "0xe892cB0d1E16Edc797260c75b42d4e59459d2F4A" as Address, deployBlock: BigInt(483050000) }, // v23
+  { address: "0x404b40FA269517D4F37d64AD28A29018e4d84F66" as Address, deployBlock: BigInt(0) }, // v20 — isGuaranteed:false fix
+  { address: "0xA6804a34f3808e9e1e079ea280f6bb9700bbA71f" as Address, deployBlock: BigInt(0) }, // v19 — dual subscription (Resolved + StatusChanged)
   { address: "0x087b04Cdf0598b9a53aCAd72522374e059Bc88DF" as Address, deployBlock: BigInt(482642000) },
   { address: "0x4CbE0b9A94E723811e49201733Fb23d73b7c39de" as Address, deployBlock: BigInt(482279598) },
   { address: "0x29AC4B1Ce9F2cCC979B2261681A6F640Dcfb6542" as Address, deployBlock: BigInt(482271937) },
@@ -306,8 +310,8 @@ const lastScannedBlock = new Map<string, bigint>();
 // Track all known duels across runs (in-memory) — ensures old duels are always processed
 const knownDuels = new Map<string, { clone: Address; factory: Address }>();
 
-// Time budget: stop scanning after this many ms to stay within Vercel Hobby 60s limit
-const TIME_BUDGET_MS = 40_000;
+// Time budget: must finish under 25s (cron-job.org max timeout = 30s, minus cold-start overhead)
+const TIME_BUDGET_MS = 22_000;
 
 async function scanAndProcess(
   publicClient: PublicClient,
@@ -317,11 +321,16 @@ async function scanAndProcess(
   const clones: { clone: Address; factory: Address }[] = [];
   const scanStart = Date.now();
 
-  // Max blocks to scan per run — conservative to stay under 60s
-  const MAX_SCAN_BLOCKS = 1500;
+  // Max blocks to scan per run — conservative to stay under 25s
+  const MAX_SCAN_BLOCKS = 500;
 
-  // Scan DuelCreated events from ALL known factories
-  for (const factory of KNOWN_FACTORIES) {
+  // On cold start, only scan the 2 most recent factories (v24, v23) — old factories
+  // are unlikely to have active duels. This cuts cold-start scan from 8 to 2 factories.
+  const isColdStart = !lastScannedBlock.has(KNOWN_FACTORIES[0].address);
+  const factoriesToScan = isColdStart ? KNOWN_FACTORIES.slice(0, 2) : KNOWN_FACTORIES;
+
+  // Scan DuelCreated events from known factories
+  for (const factory of factoriesToScan) {
     if (Date.now() - scanStart > TIME_BUDGET_MS) {
       log(`TIME BUDGET reached — stopping scan at factory ${factory.address.slice(0, 10)}...`);
       break;
