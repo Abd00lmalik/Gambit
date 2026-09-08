@@ -435,6 +435,8 @@ export async function GET(req: NextRequest) {
 }
 
 // POST: manual trigger (same logic, no auth required for local testing)
+// Accepts optional JSON body: { clones: [{ address: "0x...", factory: "0x..." }] }
+// If no body or empty clones, falls back to scanAndProcess
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
 
@@ -456,7 +458,41 @@ export async function POST(req: NextRequest) {
       transport: http(RPC_URL),
     });
 
-    log("--- manual run start ---");
+    // Check for specific clones in request body
+    let explicitClones: { clone: Address; factory: Address }[] = [];
+    try {
+      const body = await req.json().catch(() => null);
+      if (body?.clones && Array.isArray(body.clones) && body.clones.length > 0) {
+        explicitClones = body.clones.map((c: any) => ({
+          clone: c.address as Address,
+          factory: c.factory as Address,
+        }));
+        log(`manual: processing ${explicitClones.length} explicit clone(s)`);
+      }
+    } catch {}
+
+    if (explicitClones.length > 0) {
+      // Process specific clones only — no scanning needed
+      let actions = 0;
+      for (const { clone, factory } of explicitClones) {
+        const tx = await processDuel(clone, factory, publicClient, walletClient);
+        if (tx) actions++;
+        // Also add to knownDuels for future runs
+        knownDuels.set(clone.toLowerCase(), { clone, factory });
+      }
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      log(`--- manual run done: ${actions} action(s), ${explicitClones.length} explicit, ${elapsed}s ---`);
+      return NextResponse.json({
+        ok: true,
+        actions,
+        totalDuels: explicitClones.length,
+        elapsed: `${elapsed}s`,
+        mode: "explicit",
+      });
+    }
+
+    // Fallback: full scan
+    log("--- manual run start (scan) ---");
     const result = await scanAndProcess(publicClient, walletClient);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     log(
@@ -469,6 +505,7 @@ export async function POST(req: NextRequest) {
       totalDuels: result.totalDuels,
       actions: result.actions,
       elapsed: `${elapsed}s`,
+      mode: "scan",
     });
   } catch (e: any) {
     return NextResponse.json(
