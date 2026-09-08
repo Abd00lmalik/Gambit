@@ -295,6 +295,8 @@ async function processDuel(
 
 // Track last scanned block per factory (in-memory, persists across requests in same instance)
 const lastScannedBlock = new Map<string, bigint>();
+// Track all known duels across runs (in-memory) — ensures old duels are always processed
+const knownDuels = new Map<string, { clone: Address; factory: Address }>();
 
 async function scanAndProcess(
   publicClient: PublicClient,
@@ -330,7 +332,10 @@ async function scanAndProcess(
           toBlock: BigInt(end),
         });
         for (const l of logs) {
-          if (l.args.clone) clones.push({ clone: l.args.clone, factory: factory.address });
+          if (l.args.clone) {
+            clones.push({ clone: l.args.clone, factory: factory.address });
+            knownDuels.set(l.args.clone.toLowerCase(), { clone: l.args.clone, factory: factory.address });
+          }
         }
       } catch (e: any) {
         log(`  getLogs warn ${factory.address.slice(0, 10)}... ${start}-${end}: ${e.message?.slice(0, 60)}`);
@@ -339,10 +344,17 @@ async function scanAndProcess(
     lastScannedBlock.set(factory.address, latest);
   }
 
-  log(`Scanned to block ${latest} — ${clones.length} total duel(s)`);
+  log(`Scanned to block ${latest} — ${clones.length} new duel(s), ${knownDuels.size} total known`);
 
   let actions = 0;
-  for (const { clone, factory } of clones.slice(0, MAX_DUELS_PER_RUN)) {
+  // Process newly found duels + all known duels (ensures old duels are checked)
+  const allDuels = new Map([...knownDuels]);
+  // Merge current scan results
+  for (const c of clones) {
+    allDuels.set(c.clone.toLowerCase(), c);
+  }
+  const duelsToProcess = Array.from(allDuels.values()).slice(0, MAX_DUELS_PER_RUN);
+  for (const { clone, factory } of duelsToProcess) {
     const tx = await processDuel(clone, factory, publicClient, walletClient);
     if (tx) actions++;
   }
