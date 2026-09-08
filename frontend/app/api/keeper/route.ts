@@ -340,7 +340,7 @@ async function scanAndProcess(
     // On first cold-start run, only scan last MAX_SCAN_BLOCKS to avoid timeout
     const startBlock = cached === factory.deployBlock
       ? (latest > BigInt(MAX_SCAN_BLOCKS) ? latest - BigInt(MAX_SCAN_BLOCKS) : factory.deployBlock)
-      : cached + 1n;
+      : cached + BigInt(1);
     const effectiveStart = startBlock < factory.deployBlock ? factory.deployBlock : startBlock;
 
     let lastScannedInFactory = effectiveStart;
