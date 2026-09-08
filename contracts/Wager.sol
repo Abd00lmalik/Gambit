@@ -388,12 +388,16 @@ contract Wager is SomniaEventHandler {
 
     /// @dev Cancel reactivity subscription and sweep remaining fund back to factory.
     ///      Called at the end of settle() and refund(). Non-critical: if unsubscribe
-    ///      fails, the fund stays in the clone (can be swept manually later).
+    ///      fails, we still sweep the fund — the subscription becomes orphaned but
+    ///      the clone balance is recovered.
     function _reclaimSubscriptionFund() internal {
         // 1. Cancel the subscription (stops future charges)
         if (subscriptionId != 0) {
-            SomniaExtensions.unsubscribe(subscriptionId);
-            emit SubscriptionCancelled(subscriptionId);
+            // Use low-level call so a precompile failure does not revert settle().
+            (bool unsubOk, ) = address(0x0100).call(
+                abi.encodeWithSignature("unsubscribe(uint256)", subscriptionId)
+            );
+            if (unsubOk) emit SubscriptionCancelled(subscriptionId);
             subscriptionId = 0;
         }
 
