@@ -16,13 +16,11 @@ import {
 const RPC_URL =
   process.env.SOMNIA_RPC_URL || "https://api.infra.testnet.somnia.network";
 const PRIVATE_KEY = process.env.KEEPER_PRIVATE_KEY;
-const FACTORY_ADDRESS =
-  "0x4CbE0b9A94E723811e49201733Fb23d73b7c39de" as Address;
-const FACTORY_DEPLOY_BLOCK = BigInt(482279598);
 const BINARY_MARKETS_MODULE =
   "0x3ecC694Cef705358864a646142ac17A90E29e388" as Address;
 const CHUNK = 900;
 const MAX_DUELS_PER_RUN = 50;
+const RPC_TIMEOUT_MS = 8_000; // Per-RPC-call timeout
 
 // All known factories (for event scanning)
 const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
@@ -89,6 +87,16 @@ const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 function log(msg: string) {
   const ts = new Date().toISOString().slice(11, 23);
   console.log(`[keeper ${ts}] ${msg}`);
+}
+
+// ── Timeout helper ───────────────────────────────────────
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
+    ),
+  ]);
 }
 
 // ── Helpers ──────────────────────────────────────────────
@@ -226,7 +234,7 @@ async function processDuel(
 ): Promise<string | null> {
   let info;
   try {
-    info = await getDuelInfo(clone, publicClient);
+    info = await withTimeout(getDuelInfo(clone, publicClient), RPC_TIMEOUT_MS, `getDuelInfo ${clone.slice(0, 10)}`);
   } catch {
     return null;
   }
@@ -238,8 +246,8 @@ async function processDuel(
     const resolvedAddr =
       info.resolvedMarketContract !== ZERO_ADDR
         ? info.resolvedMarketContract
-        : await resolveMarket(info.marketId, publicClient);
-    market = await getMarketStatus(resolvedAddr ?? undefined, publicClient);
+        : await withTimeout(resolveMarket(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolveMarket`);
+    market = await withTimeout(getMarketStatus(resolvedAddr ?? undefined, publicClient), RPC_TIMEOUT_MS, `getMarketStatus`);
   } catch {
     market = { exists: false, resolved: false, voided: false };
   }
@@ -299,18 +307,18 @@ const lastScannedBlock = new Map<string, bigint>();
 const knownDuels = new Map<string, { clone: Address; factory: Address }>();
 
 // Time budget: stop scanning after this many ms to stay within Vercel Hobby 60s limit
-const TIME_BUDGET_MS = 45_000;
+const TIME_BUDGET_MS = 40_000;
 
 async function scanAndProcess(
   publicClient: PublicClient,
   walletClient: WalletClient
 ) {
-  const latest = await publicClient.getBlockNumber();
+  const latest = await withTimeout(publicClient.getBlockNumber(), RPC_TIMEOUT_MS, "getBlockNumber");
   const clones: { clone: Address; factory: Address }[] = [];
   const scanStart = Date.now();
 
-  // Max blocks to scan per run to stay under Vercel's 60s timeout
-  const MAX_SCAN_BLOCKS = 3000;
+  // Max blocks to scan per run — conservative to stay under 60s
+  const MAX_SCAN_BLOCKS = 1500;
 
   // Scan DuelCreated events from ALL known factories
   for (const factory of KNOWN_FACTORIES) {
@@ -335,12 +343,16 @@ async function scanAndProcess(
       if (Date.now() - scanStart > TIME_BUDGET_MS) break;
       const end = Math.min(start + CHUNK - 1, Number(latest));
       try {
-        const logs = await publicClient.getLogs({
-          address: factory.address,
-          event: DUEL_CREATED_EVENT,
-          fromBlock: BigInt(start),
-          toBlock: BigInt(end),
-        });
+        const logs = await withTimeout(
+          publicClient.getLogs({
+            address: factory.address,
+            event: DUEL_CREATED_EVENT,
+            fromBlock: BigInt(start),
+            toBlock: BigInt(end),
+          }),
+          RPC_TIMEOUT_MS,
+          `getLogs ${factory.address.slice(0, 10)}`
+        );
         for (const l of logs) {
           if (l.args.clone) {
             clones.push({ clone: l.args.clone, factory: factory.address });
@@ -350,6 +362,11 @@ async function scanAndProcess(
         lastScannedInFactory = BigInt(end);
       } catch (e: any) {
         log(`  getLogs warn ${factory.address.slice(0, 10)}... ${start}-${end}: ${e.message?.slice(0, 60)}`);
+        // If this is a timeout, skip remaining blocks for this factory
+        if (e.message?.includes("timeout")) {
+          log(`  skipping remaining blocks for ${factory.address.slice(0, 10)}...`);
+          break;
+        }
       }
     }
     lastScannedBlock.set(factory.address, lastScannedInFactory);
