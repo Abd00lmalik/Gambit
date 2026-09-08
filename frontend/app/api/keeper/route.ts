@@ -26,6 +26,7 @@ const MAX_DUELS_PER_RUN = 50;
 
 // All known factories (for event scanning)
 const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
+  { address: "0x087b04Cdf0598b9a53aCAd72522374e059Bc88DF" as Address, deployBlock: BigInt(482642000) },
   { address: "0x4CbE0b9A94E723811e49201733Fb23d73b7c39de" as Address, deployBlock: BigInt(482279598) },
   { address: "0x29AC4B1Ce9F2cCC979B2261681A6F640Dcfb6542" as Address, deployBlock: BigInt(482271937) },
   { address: "0x7B1A880EDC070FDF6a484DAEbF72e3143e68A9Ea" as Address, deployBlock: BigInt(482119325) },
@@ -186,7 +187,7 @@ async function sendTx(
     functionName,
     account: walletClient.account!,
     nonce,
-    gas: BigInt(500000),
+    gas: BigInt(5_000_000),
   });
   const hash = await walletClient.writeContract(request);
   return publicClient.waitForTransactionReceipt({ hash });
@@ -210,7 +211,7 @@ async function sendFactoryTx(
     args: [clone],
     account: walletClient.account!,
     nonce,
-    gas: BigInt(500000),
+    gas: BigInt(5_000_000),
   });
   const hash = await walletClient.writeContract(request);
   return publicClient.waitForTransactionReceipt({ hash });
