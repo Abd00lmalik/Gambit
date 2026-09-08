@@ -293,6 +293,9 @@ async function processDuel(
   return null;
 }
 
+// Track last scanned block per factory (in-memory, persists across requests in same instance)
+const lastScannedBlock = new Map<string, bigint>();
+
 async function scanAndProcess(
   publicClient: PublicClient,
   walletClient: WalletClient
@@ -300,10 +303,21 @@ async function scanAndProcess(
   const latest = await publicClient.getBlockNumber();
   const clones: { clone: Address; factory: Address }[] = [];
 
+  // Max blocks to scan per run to stay under Vercel's 60s timeout
+  const MAX_SCAN_BLOCKS = 5000;
+
   // Scan DuelCreated events from ALL known factories
   for (const factory of KNOWN_FACTORIES) {
+    // Resume from last scanned block, or start from factory deploy block
+    const cached = lastScannedBlock.get(factory.address) ?? factory.deployBlock;
+    // On first cold-start run, only scan last MAX_SCAN_BLOCKS to avoid timeout
+    const startBlock = cached === factory.deployBlock
+      ? (latest > BigInt(MAX_SCAN_BLOCKS) ? latest - BigInt(MAX_SCAN_BLOCKS) : factory.deployBlock)
+      : cached + 1n;
+    const effectiveStart = startBlock < factory.deployBlock ? factory.deployBlock : startBlock;
+
     for (
-      let start = Number(factory.deployBlock);
+      let start = Number(effectiveStart);
       start <= Number(latest);
       start += CHUNK
     ) {
@@ -322,6 +336,7 @@ async function scanAndProcess(
         log(`  getLogs warn ${factory.address.slice(0, 10)}... ${start}-${end}: ${e.message?.slice(0, 60)}`);
       }
     }
+    lastScannedBlock.set(factory.address, latest);
   }
 
   log(`Scanned to block ${latest} — ${clones.length} total duel(s)`);
