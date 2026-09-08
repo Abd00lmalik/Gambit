@@ -298,18 +298,26 @@ const lastScannedBlock = new Map<string, bigint>();
 // Track all known duels across runs (in-memory) — ensures old duels are always processed
 const knownDuels = new Map<string, { clone: Address; factory: Address }>();
 
+// Time budget: stop scanning after this many ms to stay within Vercel Hobby 60s limit
+const TIME_BUDGET_MS = 45_000;
+
 async function scanAndProcess(
   publicClient: PublicClient,
   walletClient: WalletClient
 ) {
   const latest = await publicClient.getBlockNumber();
   const clones: { clone: Address; factory: Address }[] = [];
+  const scanStart = Date.now();
 
   // Max blocks to scan per run to stay under Vercel's 60s timeout
-  const MAX_SCAN_BLOCKS = 5000;
+  const MAX_SCAN_BLOCKS = 3000;
 
   // Scan DuelCreated events from ALL known factories
   for (const factory of KNOWN_FACTORIES) {
+    if (Date.now() - scanStart > TIME_BUDGET_MS) {
+      log(`TIME BUDGET reached — stopping scan at factory ${factory.address.slice(0, 10)}...`);
+      break;
+    }
     // Resume from last scanned block, or start from factory deploy block
     const cached = lastScannedBlock.get(factory.address) ?? factory.deployBlock;
     // On first cold-start run, only scan last MAX_SCAN_BLOCKS to avoid timeout
@@ -318,11 +326,13 @@ async function scanAndProcess(
       : cached + 1n;
     const effectiveStart = startBlock < factory.deployBlock ? factory.deployBlock : startBlock;
 
+    let lastScannedInFactory = effectiveStart;
     for (
       let start = Number(effectiveStart);
       start <= Number(latest);
       start += CHUNK
     ) {
+      if (Date.now() - scanStart > TIME_BUDGET_MS) break;
       const end = Math.min(start + CHUNK - 1, Number(latest));
       try {
         const logs = await publicClient.getLogs({
@@ -337,11 +347,12 @@ async function scanAndProcess(
             knownDuels.set(l.args.clone.toLowerCase(), { clone: l.args.clone, factory: factory.address });
           }
         }
+        lastScannedInFactory = BigInt(end);
       } catch (e: any) {
         log(`  getLogs warn ${factory.address.slice(0, 10)}... ${start}-${end}: ${e.message?.slice(0, 60)}`);
       }
     }
-    lastScannedBlock.set(factory.address, latest);
+    lastScannedBlock.set(factory.address, lastScannedInFactory);
   }
 
   log(`Scanned to block ${latest} — ${clones.length} new duel(s), ${knownDuels.size} total known`);
@@ -355,6 +366,10 @@ async function scanAndProcess(
   }
   const duelsToProcess = Array.from(allDuels.values()).slice(0, MAX_DUELS_PER_RUN);
   for (const { clone, factory } of duelsToProcess) {
+    if (Date.now() - scanStart > TIME_BUDGET_MS) {
+      log(`TIME BUDGET reached — stopping processing after ${actions} actions`);
+      break;
+    }
     const tx = await processDuel(clone, factory, publicClient, walletClient);
     if (tx) actions++;
   }
