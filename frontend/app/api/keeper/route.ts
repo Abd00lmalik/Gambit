@@ -54,36 +54,59 @@ const somniaChain = defineChain({
   rpcUrls: { default: { http: [RPC_URL] } },
 });
 
-// ── ABIs ─────────────────────────────────────────────────
+// ── ABIs (JSON format — viem 2.56.1 does not support human-readable strings) ──
 const WAGER_ABI = [
-  "function state() view returns (uint8)",
-  "function joinDeadline() view returns (uint256)",
-  "function owner() view returns (address)",
-  "function playerA() view returns (address)",
-  "function playerB() view returns (address)",
-  "function marketId() view returns (bytes32)",
-  "function resolvedMarketContract() view returns (address)",
-  "function stakeAmount() view returns (uint256)",
-
-  "function deposits(address) view returns (uint256)",
-  "function settle()",
-  "function refund()",
-  "function cancel()",
-  "function factoryCancel()",
-] as const;
+  { name: "state", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { name: "joinDeadline", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "owner", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { name: "playerA", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { name: "playerB", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { name: "marketId", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bytes32" }] },
+  { name: "resolvedMarketContract", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { name: "stakeAmount", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { name: "deposits", type: "function", stateMutability: "view", inputs: [{ name: "addr", type: "address" }], outputs: [{ type: "uint256" }] },
+  { name: "settle", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { name: "refund", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { name: "cancel", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { name: "factoryCancel", type: "function", stateMutability: "nonpayable", inputs: [], outputs: [] },
+];
 
 const MARKET_ABI = [
-  "function isResolved() view returns (bool)",
-  "function isVoided() view returns (bool)",
-] as const;
+  { name: "isResolved", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+  { name: "isVoided", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+];
 
 const FACTORY_ABI = [
-  "function cancelDuel(address clone)",
-] as const;
+  { name: "cancelDuel", type: "function", stateMutability: "nonpayable", inputs: [{ name: "clone", type: "address" }], outputs: [] },
+];
 
 const BINARY_MARKETS_MODULE_ABI = [
-  "function markets(bytes32) view returns (tuple(uint256 oracleQuestionId, uint8 outcomeSlotCount, uint8 voidPolicy, address collateral, uint32 originOperatorId, bytes32 originVenueId, address oracleAdapter, address creator, address market, address pool, uint256 yesId, uint256 noId, uint64 tradingStart, uint64 expiry))",
-] as const;
+  {
+    name: "markets",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "marketId", type: "bytes32" }],
+    outputs: [{
+      type: "tuple",
+      components: [
+        { name: "oracleQuestionId", type: "uint256" },
+        { name: "outcomeSlotCount", type: "uint8" },
+        { name: "voidPolicy", type: "uint8" },
+        { name: "collateral", type: "address" },
+        { name: "originOperatorId", type: "uint32" },
+        { name: "originVenueId", type: "bytes32" },
+        { name: "oracleAdapter", type: "address" },
+        { name: "creator", type: "address" },
+        { name: "market", type: "address" },
+        { name: "pool", type: "address" },
+        { name: "yesId", type: "uint256" },
+        { name: "noId", type: "uint256" },
+        { name: "tradingStart", type: "uint64" },
+        { name: "expiry", type: "uint64" },
+      ],
+    }],
+  },
+];
 
 const DUEL_CREATED_EVENT =
   parseAbiItem(
