@@ -31,6 +31,7 @@ const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabase
 
 // All known factories (for event scanning)
 const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
+  { address: "0x2A4272E249BBAdd03d210ccF3A0B770CD7454089" as Address, deployBlock: BigInt(483841483) }, // v27 — split-market handling in settle()
   { address: "0x0939493F3ba9B96c381110c29fCe85788B8da28a" as Address, deployBlock: BigInt(483764000) }, // v26 — permissionless cancelDuel()
   { address: "0x256E05956B0C93735163a96d366865315f6e0A14" as Address, deployBlock: BigInt(483607331) }, // v25 — extcodesize fallback for dead resolvedMarketContract
   { address: "0xEf261Ee4501A50F989F1b0C3aC58DF0E27d15444" as Address, deployBlock: BigInt(483089000) }, // v24 — pre-deployed Wager impl
