@@ -302,7 +302,7 @@ function DuelRow({
       <div
         className={`h-10 w-10 rounded-lg flex items-center justify-center font-display text-sm font-bold flex-shrink-0 bg-orange-500/15 text-orange-400`}
       >
-        <AssetIcon asset={duel.asset || "BTC"} className="h-5 w-5" />
+        <AssetIcon asset="BTC" className="h-5 w-5" />
       </div>
 
       {/* Info */}

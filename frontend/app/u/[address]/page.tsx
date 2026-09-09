@@ -249,7 +249,7 @@ export default function ProfilePage({
                     className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 transition-all duration-200 hover:border-white/20 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal cursor-pointer"
                   >
                     <div className="h-8 w-8 rounded-lg flex items-center justify-center text-xs font-bold bg-orange-500/15 text-orange-400">
-                      <AssetIcon asset={duel.asset || "BTC"} className="h-4 w-4" />
+                      <AssetIcon asset="BTC" className="h-4 w-4" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-display text-xs font-bold text-foam">
