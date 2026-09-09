@@ -11,6 +11,7 @@ import {
   type PublicClient,
   type WalletClient,
 } from "viem";
+import { createClient } from "@supabase/supabase-js";
 
 // ── Config ───────────────────────────────────────────────
 const RPC_URL =
@@ -20,7 +21,13 @@ const BINARY_MARKETS_MODULE =
   "0x3ecC694Cef705358864a646142ac17A90E29e388" as Address;
 const CHUNK = 500;
 const MAX_DUELS_PER_RUN = 30;
-const RPC_TIMEOUT_MS = 8_000; // Per-RPC-call timeout (must finish under 25s total)
+const RPC_TIMEOUT_MS = 8_000;
+const COLD_START_SCAN_BLOCKS = 5_000; // Reduced from 100k — use DB for persistence
+
+// Supabase client for persistent state
+const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 // All known factories (for event scanning)
 const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
@@ -28,8 +35,8 @@ const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
   { address: "0x256E05956B0C93735163a96d366865315f6e0A14" as Address, deployBlock: BigInt(483607331) }, // v25 — extcodesize fallback for dead resolvedMarketContract
   { address: "0xEf261Ee4501A50F989F1b0C3aC58DF0E27d15444" as Address, deployBlock: BigInt(483089000) }, // v24 — pre-deployed Wager impl
   { address: "0xe892cB0d1E16Edc797260c75b42d4e59459d2F4A" as Address, deployBlock: BigInt(483050000) }, // v23
-  { address: "0x404b40FA269517D4F37d64AD28A29018e4d84F66" as Address, deployBlock: BigInt(0) }, // v20 — isGuaranteed:false fix
-  { address: "0xA6804a34f3808e9e1e079ea280f6bb9700bbA71f" as Address, deployBlock: BigInt(0) }, // v19 — dual subscription (Resolved + StatusChanged)
+  { address: "0x404b40FA269517D4F37d64AD28A29018e4d84F66" as Address, deployBlock: BigInt(0) }, // v20
+  { address: "0xA6804a34f3808e9e1e079ea280f6bb9700bbA71f" as Address, deployBlock: BigInt(0) }, // v19
   { address: "0x087b04Cdf0598b9a53aCAd72522374e059Bc88DF" as Address, deployBlock: BigInt(482642000) },
   { address: "0x4CbE0b9A94E723811e49201733Fb23d73b7c39de" as Address, deployBlock: BigInt(482279598) },
   { address: "0x29AC4B1Ce9F2cCC979B2261681A6F640Dcfb6542" as Address, deployBlock: BigInt(482271937) },
@@ -103,6 +110,55 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
       setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
     ),
   ]);
+}
+
+// ── Persistent state via Supabase ────────────────────────
+async function getPersistedBlock(factoryAddr: string): Promise<bigint> {
+  if (!supabase) return BigInt(0);
+  try {
+    const { data } = await supabase
+      .from("indexer_state")
+      .select("value")
+      .eq("key", `keeper_factory_${factoryAddr.toLowerCase()}`)
+      .limit(1)
+      .single();
+    return data ? BigInt(data.value) : BigInt(0);
+  } catch {
+    return BigInt(0);
+  }
+}
+
+async function setPersistedBlock(factoryAddr: string, block: bigint): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase
+      .from("indexer_state")
+      .upsert(
+        {
+          key: `keeper_factory_${factoryAddr.toLowerCase()}`,
+          value: String(block),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" }
+      );
+  } catch (e) {
+    console.warn("setPersistedBlock failed:", e);
+  }
+}
+
+// ── DB: Get active duels that need processing ────────────
+async function getActiveDuelsFromDb(): Promise<{ contract_address: string; factory_address: string }[]> {
+  if (!supabase) return [];
+  try {
+    const { data } = await supabase
+      .from("duels")
+      .select("contract_address, factory_address")
+      .in("state", [CREATED, LOCKED])
+      .limit(MAX_DUELS_PER_RUN * 2); // Get more than we need, filtering happens later
+    return (data as { contract_address: string; factory_address: string }[]) || [];
+  } catch {
+    return [];
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────
@@ -180,12 +236,9 @@ async function resolveMarket(
     client: publicClient,
   });
   const r = await c.read.markets([marketId]);
-  // viem may return tuple as array (index 8 = market) or named object (.market)
   return ((r as any).market ?? (r as any)[8]) as Address;
 }
 
-// Resolve pool address from BinaryMarketsModule (index 9 in the tuple).
-// Used as fallback when the market address (index 8) has no code (Era 3 DreamDEX).
 async function resolvePoolAddress(
   marketId: `0x${string}`,
   publicClient: PublicClient
@@ -201,7 +254,6 @@ async function resolvePoolAddress(
   return ((r as any).pool ?? (r as any)[9]) as Address;
 }
 
-// Check if an address has deployed contract code
 async function hasCode(
   addr: Address,
   publicClient: PublicClient
@@ -273,30 +325,39 @@ async function processDuel(
 
   if (FINAL.has(info.state)) return null;
 
+  // ── Market resolution (3-tier with fallback) ───────────
+  // If we can't determine resolution, we still try settle/cancel because
+  // the on-chain contract handles its own resolution internally.
   let market;
+  let resolutionSource = "unknown";
   try {
-    // Step 1: Determine the best address to check market resolution
     let resolvedAddr: Address | null = null;
 
     if (info.resolvedMarketContract !== ZERO_ADDR) {
-      // Try the stored address first — check if it actually has code
       if (await hasCode(info.resolvedMarketContract, publicClient)) {
         resolvedAddr = info.resolvedMarketContract;
+        resolutionSource = "stored";
       } else {
-        // Stored address is dead (no code) — this is the Era 3 DreamDEX bug.
-        // Try re-resolving from BinaryMarketsModule, then fall back to pool address.
         log(`  dead resolvedMarketContract ${info.resolvedMarketContract} — re-resolving`);
         resolvedAddr = await withTimeout(resolveMarket(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolveMarket`);
-        if (!resolvedAddr || !(await hasCode(resolvedAddr, publicClient))) {
-          // Market address also dead — try pool address (Era 3 pools DO have code)
+        if (resolvedAddr && await hasCode(resolvedAddr, publicClient)) {
+          resolutionSource = "re-resolved market";
+        } else {
           resolvedAddr = await withTimeout(resolvePoolAddress(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolvePoolAddress`);
+          if (resolvedAddr && await hasCode(resolvedAddr, publicClient)) {
+            resolutionSource = "pool";
+          }
         }
       }
     } else {
-      // No stored address — resolve from scratch
       resolvedAddr = await withTimeout(resolveMarket(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolveMarket`);
-      if (!resolvedAddr || !(await hasCode(resolvedAddr, publicClient))) {
+      if (resolvedAddr && await hasCode(resolvedAddr, publicClient)) {
+        resolutionSource = "fresh market";
+      } else {
         resolvedAddr = await withTimeout(resolvePoolAddress(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolvePoolAddress`);
+        if (resolvedAddr && await hasCode(resolvedAddr, publicClient)) {
+          resolutionSource = "fresh pool";
+        }
       }
     }
 
@@ -336,9 +397,10 @@ async function processDuel(
         return null;
       }
     }
+
     if (market.resolved) {
       log(
-        `SETTLE ${clone} — pot: ${formatEther(info.stakeAmount * BigInt(2))} STT`
+        `SETTLE ${clone} — pot: ${formatEther(info.stakeAmount * BigInt(2))} STT (via ${resolutionSource})`
       );
       try {
         const r = await sendTx(walletClient, publicClient, clone, "settle");
@@ -349,15 +411,30 @@ async function processDuel(
         return null;
       }
     }
+
+    // CRITICAL FALLBACK: If we can't determine resolution (dead address, no code)
+    // but the duel is LOCKED and has been sitting for a while, try settle() anyway.
+    // The on-chain Wager contract has its own _resolveMarketContract() fallback
+    // that can find the correct market address even when our off-chain lookup fails.
+    // Only attempt if joinDeadline has passed (market should be resolved by now).
+    if (!market.exists && deadlinePassed) {
+      log(
+        `SETTLE-ATTEMPT ${clone} — can't verify resolution (market addr dead), trying on-chain fallback`
+      );
+      try {
+        const r = await sendTx(walletClient, publicClient, clone, "settle");
+        log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
+        return r.transactionHash;
+      } catch (e: any) {
+        // This is expected if the market genuinely isn't resolved yet
+        log(`  FAIL (market may not be resolved yet) ${e.shortMessage || e.message?.slice(0, 80)}`);
+        return null;
+      }
+    }
   }
 
   return null;
 }
-
-// Track last scanned block per factory (in-memory, persists across requests in same instance)
-const lastScannedBlock = new Map<string, bigint>();
-// Track all known duels across runs (in-memory) — ensures old duels are always processed
-const knownDuels = new Map<string, { clone: Address; factory: Address }>();
 
 // Time budget: must finish under 25s (cron-job.org max timeout = 30s, minus cold-start overhead)
 const TIME_BUDGET_MS = 22_000;
@@ -370,30 +447,43 @@ async function scanAndProcess(
   const clones: { clone: Address; factory: Address }[] = [];
   const scanStart = Date.now();
 
-  // Max blocks to scan per run — generous on cold start to find all duels,
-  // time budget will naturally cap actual scan time
-  const MAX_SCAN_BLOCKS = 100_000;
+  // ── Phase 1: Load persisted state + active DB duels ────
+  const knownDuels = new Map<string, { clone: Address; factory: Address }>();
 
-  // On cold start, scan all factories but start from their deploy blocks
-  // (knownDuels map is lost between Vercel serverless invocations)
-  const isColdStart = !lastScannedBlock.has(KNOWN_FACTORIES[0].address);
-  const factoriesToScan = isColdStart ? KNOWN_FACTORIES : KNOWN_FACTORIES;
+  // Load active duels from DB (survives cold starts)
+  const dbDuels = await getActiveDuelsFromDb();
+  for (const d of dbDuels) {
+    const addr = d.contract_address.toLowerCase() as string;
+    knownDuels.set(addr, {
+      clone: d.contract_address as Address,
+      factory: d.factory_address as Address,
+    });
+  }
+  if (dbDuels.length > 0) {
+    log(`Loaded ${dbDuels.length} active duel(s) from DB`);
+  }
 
-  // Scan DuelCreated events from known factories
-  for (const factory of factoriesToScan) {
+  // ── Phase 2: Scan events from factories ────────────────
+  for (const factory of KNOWN_FACTORIES) {
     if (Date.now() - scanStart > TIME_BUDGET_MS) {
       log(`TIME BUDGET reached — stopping scan at factory ${factory.address.slice(0, 10)}...`);
       break;
     }
-    // Resume from last scanned block, or start from recent blocks
-    const cached = lastScannedBlock.get(factory.address);
-    // On cold start, scan from latest-10000 to find recent events quickly.
-    // Time budget will cap how far back we go. Only scan from deploy block
-    // if we've never scanned AND are still within time budget on later factories.
-    const startBlock = cached
-      ? cached + BigInt(1)
-      : (latest > BigInt(10_000) ? latest - BigInt(10_000) : factory.deployBlock);
+
+    // Load persisted scan position for this factory
+    const persistedBlock = await getPersistedBlock(factory.address);
+    const startBlock = persistedBlock > BigInt(0)
+      ? persistedBlock + BigInt(1)
+      : latest > BigInt(COLD_START_SCAN_BLOCKS)
+        ? latest - BigInt(COLD_START_SCAN_BLOCKS)
+        : factory.deployBlock;
     const effectiveStart = startBlock < factory.deployBlock ? factory.deployBlock : startBlock;
+
+    // Skip if already up to date
+    if (effectiveStart > latest) {
+      log(`  ${factory.address.slice(0, 10)}... already up to date (block ${persistedBlock})`);
+      continue;
+    }
 
     let lastScannedInFactory = effectiveStart;
     for (
@@ -423,26 +513,22 @@ async function scanAndProcess(
         lastScannedInFactory = BigInt(end);
       } catch (e: any) {
         log(`  getLogs warn ${factory.address.slice(0, 10)}... ${start}-${end}: ${e.message?.slice(0, 60)}`);
-        // If this is a timeout, skip remaining blocks for this factory
         if (e.message?.includes("timeout")) {
           log(`  skipping remaining blocks for ${factory.address.slice(0, 10)}...`);
           break;
         }
       }
     }
-    lastScannedBlock.set(factory.address, lastScannedInFactory);
+
+    // Persist scan position
+    await setPersistedBlock(factory.address, lastScannedInFactory);
   }
 
-  log(`Scanned to block ${latest} — ${clones.length} new duel(s), ${knownDuels.size} total known`);
+  log(`Scanned to block ${latest} — ${clones.length} new duel(s) from events, ${knownDuels.size} total known`);
 
+  // ── Phase 3: Process all known duels ───────────────────
   let actions = 0;
-  // Process newly found duels + all known duels (ensures old duels are checked)
-  const allDuels = new Map([...knownDuels]);
-  // Merge current scan results
-  for (const c of clones) {
-    allDuels.set(c.clone.toLowerCase(), c);
-  }
-  const duelsToProcess = Array.from(allDuels.values()).slice(0, MAX_DUELS_PER_RUN);
+  const duelsToProcess = Array.from(knownDuels.values()).slice(0, MAX_DUELS_PER_RUN);
   for (const { clone, factory } of duelsToProcess) {
     if (Date.now() - scanStart > TIME_BUDGET_MS) {
       log(`TIME BUDGET reached — stopping processing after ${actions} actions`);
@@ -459,8 +545,7 @@ async function scanAndProcess(
 export async function GET(req: NextRequest) {
   const startTime = Date.now();
 
-  // Authenticate: Vercel cron sends CRON_SECRET as Bearer token.
-  // If CRON_SECRET is set, require it; otherwise allow unauthenticated (permissionless on-chain calls).
+  // Authenticate
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
@@ -488,6 +573,13 @@ export async function GET(req: NextRequest) {
       transport: http(RPC_URL),
     });
 
+    // Log keeper wallet balance
+    const balance = await publicClient.getBalance({ address: walletClient.account!.address });
+    log(`keeper wallet: ${walletClient.account!.address} balance: ${formatEther(balance)} STT`);
+    if (balance < BigInt("100000000000000000")) { // < 0.1 STT
+      log(`WARNING: keeper wallet balance critically low!`);
+    }
+
     log("--- cron run start ---");
     const result = await scanAndProcess(publicClient, walletClient);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -512,9 +604,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST: manual trigger (same logic, no auth required for local testing)
-// Accepts optional JSON body: { clones: [{ address: "0x...", factory: "0x..." }] }
-// If no body or empty clones, falls back to scanAndProcess
+// POST: manual trigger — accepts optional { clones: [{ address, factory }] }
 export async function POST(req: NextRequest) {
   const startTime = Date.now();
 
@@ -536,6 +626,10 @@ export async function POST(req: NextRequest) {
       transport: http(RPC_URL),
     });
 
+    // Log balance on manual runs too
+    const balance = await publicClient.getBalance({ address: walletClient.account!.address });
+    log(`keeper wallet: ${walletClient.account!.address} balance: ${formatEther(balance)} STT`);
+
     // Check for specific clones in request body
     let explicitClones: { clone: Address; factory: Address }[] = [];
     try {
@@ -550,13 +644,10 @@ export async function POST(req: NextRequest) {
     } catch {}
 
     if (explicitClones.length > 0) {
-      // Process specific clones only — no scanning needed
       let actions = 0;
       for (const { clone, factory } of explicitClones) {
         const tx = await processDuel(clone, factory, publicClient, walletClient);
         if (tx) actions++;
-        // Also add to knownDuels for future runs
-        knownDuels.set(clone.toLowerCase(), { clone, factory });
       }
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       log(`--- manual run done: ${actions} action(s), ${explicitClones.length} explicit, ${elapsed}s ---`);

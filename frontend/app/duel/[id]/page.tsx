@@ -92,10 +92,12 @@ export default function DuelPage({ params }: { params: { id: string } }) {
 
   const duel = useDuelReads(duelAddress);
   const prices = useLivePrices();
-  const { resolvedMarketAddress } = useResolvedMarketAddress(duel.marketId);
+  const { resolvedMarketAddress, poolAddress } = useResolvedMarketAddress(duel.marketId);
   // Use resolved Market contract for on-chain IBinaryMarket reads (isResolved, status, etc.)
   // NOT the raw CLOB listing address from duel.marketAddress, which may have no EVM code
   const market = useMarketStatus(resolvedMarketAddress);
+  // Fallback: if market address has no code (Era 3), also check pool address
+  const poolMarket = useMarketStatus(!market.isResolved && !market.isVoided ? poolAddress : undefined);
   const actions = useDuelActions(duelAddress);
   const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
 
@@ -109,11 +111,13 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   // P1: Auto-trigger settle() for older-impl markets when market resolves
   // This is permissionless - anyone visiting the page can trigger it
   // MUST be called before any early returns (Rules of Hooks)
+  // Use pool fallback: if market address resolved check fails, try pool address
+  const effectiveIsResolved = (market.isResolved ?? false) || (poolMarket.isResolved ?? false);
   const autoSettle = useAutoSettle({
     duelAddress,
     state: duel.state,
     marketAddress: resolvedMarketAddress,
-    marketIsResolved: market.isResolved ?? false,
+    marketIsResolved: effectiveIsResolved,
     settleDuel: actions.settleDuel,
     isSettling: actions.isPending,
   });

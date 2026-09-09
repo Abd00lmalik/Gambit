@@ -325,10 +325,7 @@ export function useFactoryReads() {
 
 /**
  * Resolves the canonical Market contract address from a Wager's marketId.
- * The Wager stores both `marketAddress` (CLOB listing address, may have no EVM code)
- * and `marketId` (bytes32). This hook calls BinaryMarketsModule.markets(marketId)
- * and returns the `.market` field — the actual Market contract that implements
- * IBinaryMarket (isResolved, status, isVoided, payoutNumerators).
+ * Tries index 8 (market) first — if it has no code (Era 3), falls back to index 9 (pool).
  */
 export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
   const record = useReadContract({
@@ -339,12 +336,14 @@ export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
     query: { enabled: !!marketId },
   });
 
-  // The .market field is at index 8 in the MarketRecord tuple
   const resolved = record.data as any;
   const marketAddress = resolved?.[8] as Address | undefined;
+  const poolAddress = resolved?.[9] as Address | undefined;
 
+  // For the hook consumer: prefer market address, but also expose pool as fallback
   return {
     resolvedMarketAddress: marketAddress,
+    poolAddress: poolAddress,
     isLoading: record.isLoading,
   };
 }

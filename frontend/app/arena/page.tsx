@@ -173,14 +173,29 @@ function ArenaContent() {
 
           // .market is at index 8 in the MarketRecord tuple
           const resolvedMarketAddress = (recordResult as any)?.[8];
-          if (!resolvedMarketAddress) continue;
+          const poolAddress = (recordResult as any)?.[9];
 
-          // Check if market is resolved using the resolved Market contract
-          const isResolved = await client.readContract({
-            address: resolvedMarketAddress,
-            abi: DREAMDEX_ABI,
-            functionName: "isResolved",
-          });
+          // Check if market is resolved — try market address first, then pool fallback
+          let isResolved = false;
+          if (resolvedMarketAddress) {
+            try {
+              isResolved = await client.readContract({
+                address: resolvedMarketAddress,
+                abi: DREAMDEX_ABI,
+                functionName: "isResolved",
+              }) as boolean;
+            } catch {}
+          }
+          // Era 3 fallback: if market address has no code, try pool address
+          if (!isResolved && poolAddress) {
+            try {
+              isResolved = await client.readContract({
+                address: poolAddress,
+                abi: DREAMDEX_ABI,
+                functionName: "isResolved",
+              }) as boolean;
+            } catch {}
+          }
 
           if (!isResolved) continue;
 
