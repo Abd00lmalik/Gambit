@@ -55,8 +55,8 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
   };
 
   // During upload: show local data URL preview (immediate feedback)
-  // After upload / idle: use proxy endpoint which generates fresh signed URLs
-  const displayUrl = preview || (currentPfp && address ? `/api/pfp/${address.toLowerCase()}` : null);
+  // After upload / idle: use stored blob URL directly (proxy doesn't work for private blobs)
+  const displayUrl = preview || currentPfp || null;
 
   return (
     <div className="relative group">

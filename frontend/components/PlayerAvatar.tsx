@@ -13,9 +13,8 @@ export default function PlayerAvatar({ address, label, size = "sm" }: PlayerAvat
   const initial = address?.charAt(2).toUpperCase() || "?";
   const dims = size === "sm" ? "h-5 w-5 text-[10px]" : "h-7 w-7 text-xs";
 
-  // Always use the proxy endpoint — it generates fresh signed URLs
-  // The stored pfp_url may be an expired signed URL
-  const imgSrc = pfpUrl ? `/api/pfp/${address.toLowerCase()}` : null;
+  // Use stored blob URL directly — proxy endpoint doesn't work for private blobs
+  const imgSrc = pfpUrl || null;
 
   if (imgSrc) {
     return (

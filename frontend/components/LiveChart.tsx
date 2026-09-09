@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef } from "react";
+import { createChart, ColorType, CrosshairMode, CandlestickSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
 
 interface LiveChartProps {
   asset: string;
@@ -12,49 +13,208 @@ interface LiveChartProps {
 
 export default function LiveChart({ asset, strike, currentPrice, showOverlay = true, compact = false }: LiveChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const priceLineRef = useRef<any>(null);
 
-  // Calculate strike line Y position based on price range
-  // TradingView 1-min chart typically shows ~±1.5-2% around current price
-  const strikeTopPct = useMemo(() => {
-    if (!currentPrice || !strike || strike === 0 || currentPrice === 0) return null;
-    const rangePct = 0.02; // ±2% — matches typical TradingView 1-min visible range
-    const high = currentPrice * (1 + rangePct);
-    const low = currentPrice * (1 - rangePct);
-    if (strike >= high || strike <= low) return null; // out of range, don't render
-    // Map strike to 0-100% (0% = top/high, 100% = bottom/low)
-    return ((high - strike) / (high - low)) * 100;
-  }, [strike, currentPrice]);
-
+  // Initialize chart
   useEffect(() => {
     if (!containerRef.current) return;
-    const container = containerRef.current;
 
-    const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-    script.type = "text/javascript";
-    script.async = true;
-    script.innerHTML = JSON.stringify({
-      autosize: true,
-      symbol: asset === "BTC" ? "BTCUSD" : "ETHUSD",
-      interval: "1",
-      timezone: "Etc/UTC",
-      theme: "dark",
-      style: "1",
-      backgroundColor: "rgba(30, 37, 38, 1)",
-      gridColor: "rgba(255, 255, 255, 0.04)",
-      hide_top_toolbar: true,
-      hide_legend: true,
-      save_image: false,
-      hide_volume: true,
-      studies: [],
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: "rgba(30, 37, 38, 1)" },
+        textColor: "rgba(255, 255, 255, 0.5)",
+        fontFamily: "inherit",
+      },
+      grid: {
+        vertLines: { color: "rgba(255, 255, 255, 0.04)" },
+        horzLines: { color: "rgba(255, 255, 255, 0.04)" },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "rgba(255,255,255,0.2)", width: 1, style: 0, labelBackgroundColor: "#1e2526" },
+        horzLine: { color: "rgba(255,255,255,0.2)", width: 1, style: 0, labelBackgroundColor: "#1e2526" },
+      },
+      rightPriceScale: {
+        borderColor: "rgba(255, 255, 255, 0.1)",
+      },
+      timeScale: {
+        borderColor: "rgba(255, 255, 255, 0.1)",
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      handleScroll: { vertTouchDrag: false },
     });
 
-    container.innerHTML = "";
-    container.appendChild(script);
+    const series = chart.addSeries(CandlestickSeries, {
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderDownColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+      wickUpColor: "#22c55e",
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = series;
+
+    const handleResize = () => {
+      if (containerRef.current) {
+        chart.applyOptions({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight,
+        });
+      }
+    };
+
+    const ro = new ResizeObserver(handleResize);
+    ro.observe(containerRef.current);
+    handleResize();
 
     return () => {
-      container.innerHTML = "";
+      ro.disconnect();
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+      priceLineRef.current = null;
     };
+  }, []);
+
+  // Fetch and display OHLC data
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const feedId = asset === "BTC" ? "BTC/USDC" : "ETH/USDC";
+        const query = `{
+          PricePoint(
+            limit: 200,
+            order_by: {blockTimestamp: asc},
+            where: {feed_id: {_eq: "${feedId}"}}
+          ) { spot blockTimestamp }
+        }`;
+        const res = await fetch("https://price-feed.prd.oracle.somnia.host/v1/graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        const data = await res.json();
+        const points = data?.data?.PricePoint || [];
+        if (cancelled || points.length === 0) return;
+
+        // Build candle data from price points (group by minute)
+        const candles = new Map<number, { open: number; high: number; low: number; close: number; time: UTCTimestamp }>();
+        for (const p of points) {
+          const price = Number(p.spot) / 1e18;
+          if (price <= 0) continue;
+          const ts = Math.floor(Number(p.blockTimestamp));
+          const minuteKey = Math.floor(ts / 60) * 60;
+          const existing = candles.get(minuteKey);
+          if (existing) {
+            existing.high = Math.max(existing.high, price);
+            existing.low = Math.min(existing.low, price);
+            existing.close = price;
+          } else {
+            candles.set(minuteKey, {
+              open: price,
+              high: price,
+              low: price,
+              close: price,
+              time: minuteKey as UTCTimestamp,
+            });
+          }
+        }
+
+        const candleData = Array.from(candles.values()).sort((a, b) => (a.time as number) - (b.time as number));
+        if (candleData.length > 0 && !cancelled) {
+          series.setData(candleData);
+          chartRef.current?.timeScale().fitContent();
+        }
+      } catch {}
+    })();
+
+    return () => { cancelled = true; };
+  }, [asset]);
+
+  // Add/update strike price line at exact price coordinate
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series || !showOverlay || !strike || strike === 0) return;
+
+    // Remove old price line
+    if (priceLineRef.current) {
+      series.removePriceLine(priceLineRef.current);
+      priceLineRef.current = null;
+    }
+
+    // Add new price line at exact strike price
+    const line = series.createPriceLine({
+      price: strike,
+      color: "#ffffff",
+      lineWidth: 1,
+      lineStyle: 2, // Dashed
+      axisLabelVisible: true,
+      title: "Strike",
+    });
+    priceLineRef.current = line;
+
+    return () => {
+      if (priceLineRef.current) {
+        series.removePriceLine(priceLineRef.current);
+        priceLineRef.current = null;
+      }
+    };
+  }, [strike, showOverlay]);
+
+  // Update with real-time price via polling
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const feedId = asset === "BTC" ? "BTC/USDC" : "ETH/USDC";
+        const query = `{
+          PricePoint(
+            limit: 1,
+            order_by: {blockTimestamp: desc},
+            where: {feed_id: {_eq: "${feedId}"}}
+          ) { spot blockTimestamp }
+        }`;
+        const res = await fetch("https://price-feed.prd.oracle.somnia.host/v1/graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        const data = await res.json();
+        const pp = data?.data?.PricePoint?.[0];
+        if (!pp?.spot) return;
+        const price = Number(pp.spot) / 1e18;
+        const ts = Math.floor(Number(pp.blockTimestamp));
+        const minuteKey = Math.floor(ts / 60) * 60 as UTCTimestamp;
+
+        const lastCandle = series.data()?.[series.data().length - 1] as any;
+        if (lastCandle?.time === minuteKey) {
+          series.update({
+            time: minuteKey,
+            open: lastCandle.open ?? price,
+            high: Math.max(lastCandle.high ?? price, price),
+            low: Math.min(lastCandle.low ?? price, price),
+            close: price,
+          });
+        } else if ((minuteKey as number) > (lastCandle?.time ?? 0)) {
+          series.update({ time: minuteKey, open: price, high: price, low: price, close: price });
+        }
+      } catch {}
+    }, 5000);
+
+    return () => { cancelled = true; clearInterval(interval); };
   }, [asset]);
 
   return (
@@ -63,26 +223,12 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
         ref={containerRef}
         className={`w-full ${compact ? "h-[200px]" : "h-[350px]"}`}
       />
-      {showOverlay && strikeTopPct !== null && (
-        <>
-          {/* Strike line overlay — white, positioned at opening price */}
-          <div
-            className="absolute left-0 right-0 pointer-events-none z-10"
-            style={{ top: `${strikeTopPct}%` }}
-          >
-            <div className="border-t-2 border-dashed border-white/70 relative">
-              <span className="absolute right-2 -top-5 bg-carbon/90 border border-white/30 rounded px-2 py-0.5 font-body text-[10px] text-white backdrop-blur-sm whitespace-nowrap">
-                Strike ${strike.toLocaleString()}
-              </span>
-            </div>
-          </div>
-          {/* Resolution window shading */}
-          <div className="absolute top-0 right-0 bottom-0 w-1/4 bg-gradient-to-l from-white/5 to-transparent pointer-events-none z-10">
-            <span className="absolute top-2 right-2 font-body text-[10px] text-white/60 uppercase tracking-wider">
-              Resolution
-            </span>
-          </div>
-        </>
+      {showOverlay && (
+        <div className="absolute top-0 right-0 bottom-0 w-1/4 bg-gradient-to-l from-white/5 to-transparent pointer-events-none z-10">
+          <span className="absolute top-2 right-2 font-body text-[10px] text-white/50 uppercase tracking-wider">
+            Resolution
+          </span>
+        </div>
       )}
     </div>
   );
