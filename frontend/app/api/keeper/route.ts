@@ -11,6 +11,7 @@ import {
   type PublicClient,
   type WalletClient,
 } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { createClient } from "@supabase/supabase-js";
 
 // ── Config ───────────────────────────────────────────────
@@ -568,7 +569,7 @@ export async function GET(req: NextRequest) {
       transport: http(RPC_URL),
     });
     const walletClient = createWalletClient({
-      account: PRIVATE_KEY as `0x${string}`,
+      account: privateKeyToAccount(PRIVATE_KEY as `0x${string}`),
       chain: somniaChain,
       transport: http(RPC_URL),
     });
@@ -621,7 +622,7 @@ export async function POST(req: NextRequest) {
       transport: http(RPC_URL),
     });
     const walletClient = createWalletClient({
-      account: PRIVATE_KEY as `0x${string}`,
+      account: privateKeyToAccount(PRIVATE_KEY as `0x${string}`),
       chain: somniaChain,
       transport: http(RPC_URL),
     });

@@ -14,13 +14,13 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Calculate strike line Y position based on price range
-  // Uses ±5% around currentPrice as the visible window
+  // Uses ±15% around currentPrice as the visible window
   const strikeTopPct = useMemo(() => {
-    if (!currentPrice || !strike || currentPrice === 0) return 50;
-    const rangePct = 0.05; // ±5%
+    if (!currentPrice || !strike || strike === 0 || currentPrice === 0) return null;
+    const rangePct = 0.15; // ±15%
     const high = currentPrice * (1 + rangePct);
     const low = currentPrice * (1 - rangePct);
-    if (strike >= high || strike <= low) return 50; // out of range, center it
+    if (strike >= high || strike <= low) return null; // out of range, don't render
     // Map strike to 0-100% (0% = top/high, 100% = bottom/low)
     return ((high - strike) / (high - low)) * 100;
   }, [strike, currentPrice]);
@@ -63,7 +63,7 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
         ref={containerRef}
         className={`w-full ${compact ? "h-[200px]" : "h-[350px]"}`}
       />
-      {showOverlay && (
+      {showOverlay && strikeTopPct !== null && (
         <>
           {/* Strike line overlay — positioned based on price ratio */}
           <div

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { useAccount } from "wagmi";
 import CustomConnectButton from "./CustomConnectButton";
+import PlayerAvatar from "./PlayerAvatar";
 
 export default function Navbar() {
   const { address } = useAccount();
@@ -37,6 +38,7 @@ export default function Navbar() {
         </div>
 
         <div className="flex items-center gap-3">
+          {address && <PlayerAvatar address={address} size="sm" />}
           <CustomConnectButton />
         </div>
       </div>

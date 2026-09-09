@@ -76,7 +76,7 @@ export default function CreateDuelPage() {
   }, [asset, selectedInterval]);
 
   const currentPrice = prices.find((p) => p.asset === asset);
-  const strike = currentPrice?.price ?? 0;
+  const strike = selectedMarket?.openingPrice ?? currentPrice?.price ?? 0;
   const joinDeadline = Math.floor(Date.now() / 1000) + timer.secondsLeft;
 
   const { sentiment } = useMarketSentiment(selectedMarket?.marketAddress);
@@ -423,7 +423,7 @@ export default function CreateDuelPage() {
 
             {/* Live chart */}
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
-              <LiveChart asset={asset} strike={strike} currentPrice={strike} />
+              <LiveChart asset={asset} strike={strike} currentPrice={currentPrice?.price ?? strike} />
             </motion.div>
 
             {/* Side picker */}
