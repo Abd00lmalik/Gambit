@@ -20,7 +20,7 @@ const BINARY_MARKETS_MODULE =
   "0x3ecC694Cef705358864a646142ac17A90E29e388" as Address;
 const CHUNK = 500;
 const MAX_DUELS_PER_RUN = 30;
-const RPC_TIMEOUT_MS = 4_000; // Per-RPC-call timeout (must finish under 25s total)
+const RPC_TIMEOUT_MS = 8_000; // Per-RPC-call timeout (must finish under 25s total)
 
 // All known factories (for event scanning)
 const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
@@ -384,13 +384,14 @@ async function scanAndProcess(
       log(`TIME BUDGET reached — stopping scan at factory ${factory.address.slice(0, 10)}...`);
       break;
     }
-    // Resume from last scanned block, or start from factory deploy block
-    const cached = lastScannedBlock.get(factory.address) ?? factory.deployBlock;
-    // On first cold-start run, scan from deploy block (not limited to recent blocks)
-    // The time budget will naturally cap how far we get
-    const startBlock = cached === factory.deployBlock
-      ? factory.deployBlock
-      : cached + BigInt(1);
+    // Resume from last scanned block, or start from recent blocks
+    const cached = lastScannedBlock.get(factory.address);
+    // On cold start, scan from latest-10000 to find recent events quickly.
+    // Time budget will cap how far back we go. Only scan from deploy block
+    // if we've never scanned AND are still within time budget on later factories.
+    const startBlock = cached
+      ? cached + BigInt(1)
+      : (latest > BigInt(10_000) ? latest - BigInt(10_000) : factory.deployBlock);
     const effectiveStart = startBlock < factory.deployBlock ? factory.deployBlock : startBlock;
 
     let lastScannedInFactory = effectiveStart;
