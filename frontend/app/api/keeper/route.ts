@@ -392,22 +392,10 @@ async function processDuel(
     market = { exists: false, resolved: false, voided: false };
   }
 
-  const now = BigInt(Math.floor(Date.now() / 1000));
-  const deadlinePassed = now > info.joinDeadline;
-
-  // CREATED: unjoined — factory-cancel if resolved or expired
-  if (info.state === CREATED && (market.resolved || deadlinePassed)) {
-    log(
-      `FACTORY-CANCEL ${clone} — stake: ${formatEther(info.stakeAmount)} STT, reason: ${market.resolved ? "market resolved" : "deadline passed"}`
-    );
-    try {
-      const r = await sendFactoryTx(walletClient, publicClient, "cancelDuel", factoryAddr, clone);
-      log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
-      return r.transactionHash;
-    } catch (e: any) {
-      log(`  FAIL ${e.shortMessage || e.message?.slice(0, 100)}`);
-      return null;
-    }
+  // CREATED: do nothing — creator can cancel manually via UI or cancel() on-chain
+  if (info.state === CREATED) {
+    log(`  CREATED — skipping (creator can cancel manually)`);
+    return null;
   }
 
   // LOCKED: both joined — settle or refund
@@ -434,26 +422,6 @@ async function processDuel(
         return r.transactionHash;
       } catch (e: any) {
         log(`  FAIL ${e.shortMessage || e.message?.slice(0, 100)}`);
-        return null;
-      }
-    }
-
-    // CRITICAL FALLBACK: If we can't confirm resolution but deadline passed,
-    // try settle() anyway. The on-chain Wager contract has its own
-    // _resolveMarketContract() fallback that can find the correct market address
-    // even when our off-chain lookup fails. If the market truly isn't resolved,
-    // the tx will revert harmlessly.
-    if (deadlinePassed) {
-      log(
-        `SETTLE-ATTEMPT ${clone} — market resolved=${market.resolved} exists=${market.exists}, trying on-chain settle (deadline passed)`
-      );
-      try {
-        const r = await sendTx(walletClient, publicClient, clone, "settle");
-        log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
-        return r.transactionHash;
-      } catch (e: any) {
-        // Expected if market genuinely isn't resolved yet
-        log(`  FAIL (market may not be resolved yet) ${e.shortMessage || e.message?.slice(0, 80)}`);
         return null;
       }
     }
