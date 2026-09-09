@@ -4,7 +4,6 @@ import {
   createWalletClient,
   http,
   parseAbiItem,
-  getContract,
   formatEther,
   defineChain,
   type Address,
@@ -178,20 +177,15 @@ async function getDuelInfo(
   resolvedMarketContract: Address;
   stakeAmount: bigint;
 }> {
-  const c = getContract({
-    address: clone,
-    abi: WAGER_ABI,
-    client: publicClient,
-  });
   const [state, joinDl, mA, mB, mktId, resolved, stake] =
     await Promise.all([
-      c.read.state(),
-      c.read.joinDeadline(),
-      c.read.playerA(),
-      c.read.playerB(),
-      c.read.marketId(),
-      c.read.resolvedMarketContract(),
-      c.read.stakeAmount(),
+      publicClient.readContract({ address: clone, abi: WAGER_ABI, functionName: "state" }),
+      publicClient.readContract({ address: clone, abi: WAGER_ABI, functionName: "joinDeadline" }),
+      publicClient.readContract({ address: clone, abi: WAGER_ABI, functionName: "playerA" }),
+      publicClient.readContract({ address: clone, abi: WAGER_ABI, functionName: "playerB" }),
+      publicClient.readContract({ address: clone, abi: WAGER_ABI, functionName: "marketId" }),
+      publicClient.readContract({ address: clone, abi: WAGER_ABI, functionName: "resolvedMarketContract" }),
+      publicClient.readContract({ address: clone, abi: WAGER_ABI, functionName: "stakeAmount" }),
     ]);
   return {
     state: Number(state as bigint),
@@ -213,16 +207,11 @@ async function getMarketStatus(
   const code = await publicClient.getCode({ address: addr });
   if (!code || code === "0x")
     return { exists: false, resolved: false, voided: false };
-  const c = getContract({
-    address: addr,
-    abi: MARKET_ABI,
-    client: publicClient,
-  });
   const [resolved, voided] = await Promise.all([
-    c.read.isResolved().catch(() => false) as Promise<boolean>,
-    c.read.isVoided().catch(() => false) as Promise<boolean>,
+    publicClient.readContract({ address: addr, abi: MARKET_ABI, functionName: "isResolved" }).catch((e: any) => { log(`  isResolved error on ${addr}: ${e.shortMessage || e.message?.slice(0, 100)}`); return false; }),
+    publicClient.readContract({ address: addr, abi: MARKET_ABI, functionName: "isVoided" }).catch((e: any) => { log(`  isVoided error on ${addr}: ${e.shortMessage || e.message?.slice(0, 100)}`); return false; }),
   ]);
-  return { exists: true, resolved, voided };
+  return { exists: true, resolved: resolved as boolean, voided: voided as boolean };
 }
 
 async function resolveMarket(
@@ -231,13 +220,18 @@ async function resolveMarket(
 ): Promise<Address | null> {
   const code = await publicClient.getCode({ address: BINARY_MARKETS_MODULE });
   if (!code || code === "0x") return null;
-  const c = getContract({
-    address: BINARY_MARKETS_MODULE,
-    abi: BINARY_MARKETS_MODULE_ABI,
-    client: publicClient,
-  });
-  const r = await c.read.markets([marketId]);
-  return ((r as any).market ?? (r as any)[8]) as Address;
+  try {
+    const r = await publicClient.readContract({
+      address: BINARY_MARKETS_MODULE,
+      abi: BINARY_MARKETS_MODULE_ABI,
+      functionName: "markets",
+      args: [marketId],
+    });
+    return ((r as any).market ?? (r as any)[8]) as Address;
+  } catch (e: any) {
+    log(`  resolveMarket error: ${e.shortMessage || e.message?.slice(0, 80)}`);
+    return null;
+  }
 }
 
 async function resolvePoolAddress(
@@ -246,13 +240,18 @@ async function resolvePoolAddress(
 ): Promise<Address | null> {
   const code = await publicClient.getCode({ address: BINARY_MARKETS_MODULE });
   if (!code || code === "0x") return null;
-  const c = getContract({
-    address: BINARY_MARKETS_MODULE,
-    abi: BINARY_MARKETS_MODULE_ABI,
-    client: publicClient,
-  });
-  const r = await c.read.markets([marketId]);
-  return ((r as any).pool ?? (r as any)[9]) as Address;
+  try {
+    const r = await publicClient.readContract({
+      address: BINARY_MARKETS_MODULE,
+      abi: BINARY_MARKETS_MODULE_ABI,
+      functionName: "markets",
+      args: [marketId],
+    });
+    return ((r as any).pool ?? (r as any)[9]) as Address;
+  } catch (e: any) {
+    log(`  resolvePool error: ${e.shortMessage || e.message?.slice(0, 80)}`);
+    return null;
+  }
 }
 
 async function hasCode(
