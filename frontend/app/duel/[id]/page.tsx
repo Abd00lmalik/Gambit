@@ -8,7 +8,6 @@ import { formatEther, type Address } from "viem";
 import AssetIcon from "@/components/AssetIcon";
 import PlayerAvatar from "@/components/PlayerAvatar";
 import CountdownTimer from "@/components/CountdownTimer";
-import SettlementLatency from "@/components/SettlementLatency";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
 import OracleVerification from "@/components/OracleVerification";
 import { useDuelReads, useDuelActions, useMarketStatus, useResolvedMarketAddress } from "@/hooks/useContracts";
@@ -495,14 +494,6 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             <div className="rounded-xl border border-up/20 bg-up/5 p-4 text-center">
               <p className="font-display text-lg font-bold text-up">Duel Settled</p>
               <p className="font-body text-sm text-gray-400 mt-1">Check your portfolio for results.</p>
-              {duel.isReactiveSettlement && duel.settlementTriggeredAt && marketExpiry && (
-                <div className="mt-3">
-                  <SettlementLatency
-                    settlementTriggeredAt={duel.settlementTriggeredAt}
-                    marketExpiry={marketExpiry}
-                  />
-                </div>
-              )}
               {duel.marketAddress && (
                 <div className="mt-3">
                   <OracleVerification marketAddress={duel.marketAddress} />

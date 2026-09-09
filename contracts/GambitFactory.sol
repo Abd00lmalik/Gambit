@@ -9,7 +9,7 @@ import {IBinaryMarketsModule} from "./interfaces/IBinaryMarketsModule.sol";
 /// @dev Deploys the logic contract once in constructor, then clones per duel.
 ///      Each clone is initialized with playerA, stake, market, fee, and deadline.
 ///      Player A's stake is forwarded to the clone via recordDeposit() during createDuel().
-///      Each clone is funded with SUBSCRIPTION_FUND SOMI for the Somnia reactivity subscription.
+///      Settlement is handled by the keeper calling settle() after market resolution.
 contract GambitFactory {
     // ── State ──────────────────────────────────────────────
 
@@ -28,10 +28,6 @@ contract GambitFactory {
     uint256 public defaultFeeBps;
     uint256 public minStake;
     uint256 public maxStake;
-
-    /// @notice SOMI funded to each Wager clone for reactivity subscription.
-    /// @dev 32 SOMI minimum required by precompile + buffer for handler gas.
-    uint256 public constant SUBSCRIPTION_FUND = 35 ether;
 
     modifier onlyOwner() {
         require(msg.sender == owner, "!owner");
@@ -90,7 +86,6 @@ contract GambitFactory {
     /// @notice Create a new duel. Player A's stake is sent as msg.value.
     /// @dev The stake is forwarded to the clone via recordDeposit() (not receive()).
     ///      This avoids the Somnia quirk where writeContract+value reverts.
-    ///      An additional SUBSCRIPTION_FUND is sent to fund the reactivity subscription.
     /// @param _marketAddress DreamDEX market contract address for this duel
     /// @param _marketId DreamDEX marketId (bytes32) used to resolve the canonical Market contract
     /// @param _joinDeadline Unix timestamp after which A can cancel if B hasn't joined
@@ -126,25 +121,10 @@ contract GambitFactory {
         // (factory is trusted — recordDeposit() checks msg.sender == factory)
         Wager(payable(clone)).recordDeposit{value: msg.value}(msg.sender);
 
-        // Fund the clone with SOMI for the reactivity subscription (non-critical).
-        // On Somnia mainnet, factory should be pre-funded via receive() or direct transfers.
-        // In tests, factory may have no balance — auto-settlement falls back to manual settle().
-        if (address(this).balance >= SUBSCRIPTION_FUND) {
-            (bool fundOk, ) = payable(clone).call{value: SUBSCRIPTION_FUND}("");
-            if (fundOk) {
-                // Create the reactivity subscription (non-critical — failure doesn't revert).
-                (bool subOk, ) = clone.call(
-                    abi.encodeWithSignature("createSubscription()")
-                );
-                // subOk is false if precompile doesn't exist — that's fine.
-            }
-        }
-
         emit DuelCreated(clone, msg.sender, msg.value, _marketAddress, _joinDeadline);
     }
 
-    /// @notice Fund the factory treasury for reactivity subscription costs.
-    /// @dev Call this before createDuel() to ensure each clone gets 35 SOMI for auto-settlement.
+    /// @notice Accept ETH for owner withdrawals.
     receive() external payable {}
 
     /// @notice Verify a market on-chain before creating a duel.
@@ -206,23 +186,6 @@ contract GambitFactory {
         assembly { impl := shl(96, shr(16, codeWord)) }
 
         return impl == ACCEPTED_MARKET_IMPL;
-    }
-
-    /// @notice Create a reactivity subscription for an existing duel that was created without one.
-    /// @dev This handles the case where the factory didn't have enough balance during createDuel().
-    ///      The factory must have >= 35 SOMI balance. Can only be called once per duel.
-    /// @param clone Address of the Wager clone to create a subscription for
-    function createSubscriptionForDuel(address clone) external onlyOwner {
-        require(clone != address(0), "zero clone");
-        require(address(this).balance >= SUBSCRIPTION_FUND, "insufficient balance");
-
-        (bool fundOk, ) = payable(clone).call{value: SUBSCRIPTION_FUND}("");
-        require(fundOk, "fund transfer failed");
-
-        (bool subOk, ) = clone.call(
-            abi.encodeWithSignature("createSubscription()")
-        );
-        require(subOk, "subscription creation failed");
     }
 
     /// @notice Cancel an expired duel from the factory. Permissionless after deadline.

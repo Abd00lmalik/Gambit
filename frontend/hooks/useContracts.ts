@@ -257,20 +257,6 @@ export function useDuelReads(duelAddress: Address | undefined) {
     query: { enabled: !!duelAddress },
   });
 
-  const settlementTriggeredAt = useReadContract({
-    address: duelAddress,
-    abi: WAGER_ABI,
-    functionName: "settlementTriggeredAt",
-    query: { enabled: !!duelAddress },
-  });
-
-  const isReactiveSettlement = useReadContract({
-    address: duelAddress,
-    abi: WAGER_ABI,
-    functionName: "isReactiveSettlement",
-    query: { enabled: !!duelAddress },
-  });
-
   const duelState = state.data !== undefined ? Number(state.data) as DuelState : undefined;
 
   return {
@@ -284,8 +270,6 @@ export function useDuelReads(duelAddress: Address | undefined) {
     joinDeadline: joinDeadline.data ? Number(joinDeadline.data) : undefined,
     joinDeadlineRemaining: joinDeadlineRemaining.data ? Number(joinDeadlineRemaining.data) : undefined,
     owner: owner.data as Address | undefined,
-    settlementTriggeredAt: settlementTriggeredAt.data ? Number(settlementTriggeredAt.data) : undefined,
-    isReactiveSettlement: isReactiveSettlement.data ?? false,
     isLoading: playerA.isLoading || state.isLoading,
     refetch: () => {
       playerA.refetch();

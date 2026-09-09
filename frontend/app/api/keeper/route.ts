@@ -31,6 +31,7 @@ const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabase
 
 // All known factories (for event scanning)
 const KNOWN_FACTORIES: { address: Address; deployBlock: bigint }[] = [
+  { address: "0x089079B21dD6A495D4c3f6844ABCab806fcf5d9E" as Address, deployBlock: BigInt(483891102) }, // v29 — no reactivity, split handling, pre-deadline factoryCancel
   { address: "0x0CD18020ffc6E35f985d1aFfD24EE3141323eb56" as Address, deployBlock: BigInt(483866131) }, // v28 — split handling + pre-deadline factoryCancel
   { address: "0x2A4272E249BBAdd03d210ccF3A0B770CD7454089" as Address, deployBlock: BigInt(483841483) }, // v27 — split-market handling in settle()
   { address: "0x0939493F3ba9B96c381110c29fCe85788B8da28a" as Address, deployBlock: BigInt(483764000) }, // v26 — permissionless cancelDuel()
@@ -63,7 +64,7 @@ const WAGER_ABI = [
   "function marketId() view returns (bytes32)",
   "function resolvedMarketContract() view returns (address)",
   "function stakeAmount() view returns (uint256)",
-  "function subscriptionFund() view returns (uint256)",
+
   "function deposits(address) view returns (uint256)",
   "function settle()",
   "function refund()",
@@ -175,14 +176,13 @@ async function getDuelInfo(
   marketId: `0x${string}`;
   resolvedMarketContract: Address;
   stakeAmount: bigint;
-  subscriptionFund: bigint;
 }> {
   const c = getContract({
     address: clone,
     abi: WAGER_ABI,
     client: publicClient,
   });
-  const [state, joinDl, mA, mB, mktId, resolved, stake, subFund] =
+  const [state, joinDl, mA, mB, mktId, resolved, stake] =
     await Promise.all([
       c.read.state(),
       c.read.joinDeadline(),
@@ -191,7 +191,6 @@ async function getDuelInfo(
       c.read.marketId(),
       c.read.resolvedMarketContract(),
       c.read.stakeAmount(),
-      c.read.subscriptionFund(),
     ]);
   return {
     state: Number(state as bigint),
@@ -201,7 +200,6 @@ async function getDuelInfo(
     marketId: mktId as `0x${string}`,
     resolvedMarketContract: resolved as Address,
     stakeAmount: stake as bigint,
-    subscriptionFund: subFund as bigint,
   };
 }
 

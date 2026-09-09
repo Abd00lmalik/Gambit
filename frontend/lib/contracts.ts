@@ -1,5 +1,5 @@
-export const FACTORY_ADDRESS = "0x0CD18020ffc6E35f985d1aFfD24EE3141323eb56" as const;
-export const IMPLEMENTATION_ADDRESS = "0x03FbDC7554dB388B26cb71CAc90191357CC21F59" as const;
+export const FACTORY_ADDRESS = "0x089079B21dD6A495D4c3f6844ABCab806fcf5d9E" as const;
+export const IMPLEMENTATION_ADDRESS = "0xF53CAfe6AF3492810BADeb1729B6E7Bd6431502E" as const;
 export const FEE_RECIPIENT = "0x25265b9dBEb6c653b0CA281110Bb0697a9685107" as const;
 export const DEX_EVENT_CONTRACTS_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
 export const BINARY_MARKETS_MODULE_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
@@ -144,20 +144,7 @@ export const WAGER_ABI = [
     outputs: [{ name: "", type: "uint8" }],
     stateMutability: "view",
   },
-  {
-    type: "function",
-    name: "settlementTriggeredAt",
-    inputs: [],
-    outputs: [{ name: "", type: "uint256" }],
-    stateMutability: "view",
-  },
-  {
-    type: "function",
-    name: "isReactiveSettlement",
-    inputs: [],
-    outputs: [{ name: "", type: "bool" }],
-    stateMutability: "view",
-  },
+
   {
     type: "function",
     name: "owner",
