@@ -13,6 +13,7 @@ import MarketSentimentBar from "@/components/MarketSentimentBar";
 import OracleVerification from "@/components/OracleVerification";
 import { useDuelReads, useDuelActions, useMarketStatus, useResolvedMarketAddress } from "@/hooks/useContracts";
 import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
+import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { useLivePrices } from "@/hooks/useLivePrices";
 import { DuelState, DUEL_STATE_LABELS, DUEL_STATE_COLORS } from "@/lib/contracts";
 import { fetchMarketByAddress, DreamDexMarket } from "@/lib/dreamdex";
@@ -571,6 +572,7 @@ function PlayerCard({ label, address, side, stake, isCreator, isActive }: {
   isActive: boolean;
 }) {
   const isUp = side === "UP";
+  const { displayName } = useSupabasePfp(address);
   return (
     <motion.div
       whileHover={{ scale: 1.02 }}
@@ -583,9 +585,13 @@ function PlayerCard({ label, address, side, stake, isCreator, isActive }: {
       }`}
     >
       <PlayerAvatar address={address} label={label} size="md" />
-      <span className="font-mono text-[11px] text-gray-400 text-center">
-        {address.slice(0, 6)}...{address.slice(-4)}
-      </span>
+      {displayName ? (
+        <span className="font-body text-[11px] text-gray-300 text-center">{displayName}</span>
+      ) : (
+        <span className="font-mono text-[11px] text-gray-400 text-center">
+          {address.slice(0, 6)}...{address.slice(-4)}
+        </span>
+      )}
       <span className={`font-display text-xs font-semibold ${isUp ? "text-up" : "text-down"}`}>
         {isUp ? "▲ Up" : "▼ Down"} · {stake} STT
       </span>

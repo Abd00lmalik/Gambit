@@ -37,6 +37,7 @@ export async function POST(req: NextRequest) {
       access: "private",
       contentType: file.type,
       addRandomSuffix: false,
+      allowOverwrite: true,
     });
 
     // Store the signed URL directly (works for private blobs)

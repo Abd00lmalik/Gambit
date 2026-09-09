@@ -6,6 +6,7 @@ import { useAccount } from "wagmi";
 import { useSearchParams } from "next/navigation";
 import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
 import { usePublicClient, useReadContract } from "wagmi";
+import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { somnia, config } from "@/lib/config";
 import { FACTORY_ADDRESS, WAGER_ABI, DREAMDEX_ABI, BINARY_MARKETS_MODULE_ADDRESS, BINARY_MARKETS_MODULE_ABI } from "@/lib/contracts";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
@@ -343,6 +344,18 @@ function ArenaContent() {
   );
 }
 
+function PlayerName({ address }: { address: string }) {
+  const { displayName } = useSupabasePfp(address);
+  if (displayName) {
+    return <span className="font-body text-[11px] text-gray-300 truncate">{displayName}</span>;
+  }
+  return (
+    <span className="font-mono text-[11px] text-gray-400 truncate">
+      {address.slice(0, 6)}...{address.slice(-4)}
+    </span>
+  );
+}
+
 function DuelCardOnChain({
   duel,
   isHighlighted,
@@ -363,7 +376,7 @@ function DuelCardOnChain({
   const isExpired = isOpen && deadlinePassed;
 
   const stateColors: Record<number, string> = {
-    [DuelState.CREATED]: "border-teal/30 bg-teal/5 hover:border-teal/50",
+    [DuelState.CREATED]: "border-down/30 bg-down/5 hover:border-down/50",
     [DuelState.LOCKED]: "border-yellow-400/30 bg-yellow-400/5",
     [DuelState.SETTLED]: "border-up/30 bg-up/5",
     [DuelState.CANCELLED]: "border-white/5 bg-white/[0.02]",
@@ -387,8 +400,8 @@ function DuelCardOnChain({
             <span className="font-body text-xs text-gray-400">{duel.asset || "BTC"} · Somnia</span>
         </div>
         <span className={`rounded-full border px-2.5 py-0.5 font-body text-[10px] font-medium uppercase tracking-wider ${
-          isExpired ? "bg-down/10 text-down border-down/20" :
-          isOpen ? "bg-teal/10 text-teal border-teal/20" :
+          isExpired ? "bg-orange-400/10 text-orange-400 border-orange-400/20" :
+          isOpen ? "bg-down/10 text-down border-down/20" :
           isLive ? "bg-yellow-400/10 text-yellow-400 border-yellow-400/20" :
           isSettled ? "bg-up/10 text-up border-up/20" :
           "bg-white/5 text-gray-500 border-white/10"
@@ -407,16 +420,12 @@ function DuelCardOnChain({
       <div className="space-y-1.5 mb-3">
         <div className="flex items-center gap-2">
           <PlayerAvatar address={duel.playerA} label="A" />
-          <span className="font-mono text-[11px] text-gray-400 truncate">
-            {duel.playerA.slice(0, 6)}...{duel.playerA.slice(-4)}
-          </span>
+          <PlayerName address={duel.playerA} />
         </div>
         {hasJoined ? (
           <div className="flex items-center gap-2">
             <PlayerAvatar address={duel.playerB} label="B" />
-            <span className="font-mono text-[11px] text-gray-400 truncate">
-              {duel.playerB.slice(0, 6)}...{duel.playerB.slice(-4)}
-            </span>
+            <PlayerName address={duel.playerB} />
           </div>
         ) : (
           <div className="flex items-center gap-2 opacity-40">

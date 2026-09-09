@@ -225,10 +225,11 @@ contract GambitFactory {
         require(subOk, "subscription creation failed");
     }
 
-    /// @notice Cancel an expired duel from the factory. Owner-only.
+    /// @notice Cancel an expired duel from the factory. Permissionless after deadline.
     /// @dev Calls factoryCancel() on the clone so msg.sender == factory passes the check.
+    ///      The clone's factoryCancel() already checks block.timestamp > joinDeadline.
     /// @param clone Address of the Wager clone to cancel
-    function cancelDuel(address clone) external onlyOwner {
+    function cancelDuel(address clone) external {
         require(clone != address(0), "zero clone");
         (bool ok, ) = clone.call(
             abi.encodeWithSignature("factoryCancel()")

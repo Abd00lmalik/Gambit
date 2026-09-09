@@ -10,8 +10,8 @@ import { fetchMarketAssets } from "@/lib/dreamdex";
 const CHUNK = BigInt(900);
 const MAX_RETRIES_PER_CHUNK = 3;
 const PARALLEL_BATCH = 6;
-const CLONE_READ_BATCH = 10;
-const INITIAL_RANGE = BigInt(200_000);
+const CLONE_READ_BATCH = 20;
+const INITIAL_RANGE = BigInt(10_000);
 const POLL_INTERVAL = 30_000;
 const CACHE_KEY = "gambit_last_scanned_block";
 const FULL_RESYNC_INTERVAL = 10; // Full resync every N polls
@@ -210,11 +210,13 @@ export function useDuelCreatedEvents() {
       } catch {}
 
       const clones = allLogs.map((log) => log.args.clone as Address);
-      const stateMap = await batchReadDuelStates(client, clones);
 
-      // Batch-fetch asset for all unique market addresses
+      // Batch-fetch state and asset info in parallel
       const marketAddresses = allLogs.map((log) => log.args.marketAddress as string);
-      const assetMap = await fetchMarketAssets(marketAddresses);
+      const [stateMap, assetMap] = await Promise.all([
+        batchReadDuelStates(client, clones),
+        fetchMarketAssets(marketAddresses),
+      ]);
 
       const newDuels = logsToDuels(allLogs, stateMap, assetMap);
 

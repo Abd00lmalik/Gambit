@@ -38,7 +38,10 @@ export function useSupabaseProfile(address: string | undefined) {
 }
 
 export function useSupabasePfp(address: string | undefined) {
-  const [pfpUrl, setPfpUrl] = useState<string | null>(null);
+  const [result, setResult] = useState<{ pfpUrl: string | null; displayName: string | null }>({
+    pfpUrl: null,
+    displayName: null,
+  });
 
   useEffect(() => {
     if (!address) return;
@@ -50,10 +53,13 @@ export function useSupabasePfp(address: string | undefined) {
         );
         if (!res.ok) return;
         const data = await res.json();
-        if (data.profile?.pfp_url) setPfpUrl(data.profile.pfp_url);
+        setResult({
+          pfpUrl: data.profile?.pfp_url ?? null,
+          displayName: data.profile?.display_name ?? null,
+        });
       } catch {}
     })();
   }, [address]);
 
-  return pfpUrl;
+  return result;
 }
