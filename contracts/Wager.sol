@@ -18,6 +18,9 @@ contract Wager is SomniaEventHandler {
     /// @notice BinaryMarketsModule — the registry that maps marketId → Market contract.
     address public constant BINARY_MARKETS_MODULE = 0x3ecC694Cef705358864a646142ac17A90E29e388;
 
+    /// @notice Event topic hash for the Resolved subscription.
+    bytes32 public constant RESOLVED_TOPIC = keccak256("Resolved(uint32,uint256[])");
+
     address public factory;
     address public owner;
     address public playerA;
@@ -33,7 +36,7 @@ contract Wager is SomniaEventHandler {
     bool private _initialized;
     uint256 public subscriptionFund;
 
-    /// @notice The reactivity subscription ID for this duel's market resolution.
+    /// @notice The reactivity subscription ID for Resolved events (newer DreamDEX impl).
     uint256 public subscriptionId;
 
     /// @notice Block timestamp when _onEvent() triggered settlement.
@@ -106,40 +109,32 @@ contract Wager is SomniaEventHandler {
 
     /// @notice Create a Somnia reactivity subscription for DreamDEX market resolution.
     /// @dev Called by the factory AFTER funding this clone with subscription SOMI.
-    ///      Uses the resolved Market contract stored at initialize() time — never
-    ///      trusts the directly-supplied marketAddress, which may be a CLOB reactivity
-    ///      address with no EVM code.
-    /// @return success True if subscription was created, false if it failed (non-critical).
+    ///      Subscribes to ALL Resolved events (emitter=address(0)), then filters by
+    ///      market ID in _onEvent(). This catches markets resolved by the newer DreamDEX
+    ///      implementation (0x6b2fee58...) which emits Resolved(uint32,uint256[]).
+    ///      Older-impl markets (0xd12ad05b...) never emit the event — the keeper
+    ///      fallback handles those.
+    /// @return success True if the subscription was created.
     function createSubscription() external returns (bool success) {
         require(msg.sender == factory, "!factory");
         require(subscriptionId == 0, "already subscribed");
 
-        // Use the pre-resolved Market contract (set at initialize() time).
-        address marketContract = resolvedMarketContract;
-        require(marketContract != address(0), "market not found");
-        require(_hasCode(marketContract), "market has no code");
-
-        // keccak256("Resolved(uint32,uint256[])")
-        // Emitted by BinaryMarket when oracle resolves the market.
-        bytes32 resolvedTopic = keccak256("Resolved(uint32,uint256[])");
-
-        SomniaExtensions.SubscriptionFilter memory filter = SomniaExtensions.SubscriptionFilter({
-            eventTopics: [
-                resolvedTopic,
-                bytes32(0),
-                bytes32(0),
-                bytes32(0)
-            ],
-            origin: address(0),
-            emitter: marketContract // resolved Market contract, not marketAddress
-        });
-
         SomniaExtensions.SubscriptionOptions memory options = SomniaExtensions.SubscriptionOptions({
-            priorityFeePerGas: 10_000_000_000, // 10 gwei
-            maxFeePerGas: 50_000_000_000,       // 50 gwei
+            priorityFeePerGas: 10_000_000_000,
+            maxFeePerGas: 50_000_000_000,
             gasLimit: 2_000_000
         });
 
+        // Subscribe to ALL Resolved events (emitter=address(0)).
+        // _onEvent() filters by market ID to only react to our market's resolution.
+        SomniaExtensions.SubscriptionFilter memory filter = SomniaExtensions.SubscriptionFilter({
+            eventTopics: [
+                keccak256("Resolved(uint32,uint256[])"),
+                bytes32(0), bytes32(0), bytes32(0)
+            ],
+            origin: address(0),
+            emitter: address(0)
+        });
         subscriptionId = SomniaExtensions.subscribe(address(this), filter, options);
         emit SubscriptionCreated(subscriptionId);
         return true;
@@ -159,47 +154,58 @@ contract Wager is SomniaEventHandler {
 
     // ── Somnia Reactivity Handler ─────────────────────────
 
-    /// @dev Called by Somnia's reactivity precompile when the subscribed DreamDEX event fires.
-    ///      This is the "hero mechanic" — settlement happens in the same block as resolution,
-    ///      with zero manual transactions or off-chain keepers.
-    ///      Handles both normal resolution (settle) and voided markets (refund).
+    /// @dev Called by Somnia's reactivity precompile when a subscribed DreamDEX event fires.
+    ///      Subscribes to ALL Resolved events (emitter=address(0)), then filters by market ID.
+    ///      For older-impl markets that never emit Resolved, the keeper fallback handles settlement.
     function _onEvent(
         address emitter,
         bytes32[] calldata eventTopics,
-        bytes calldata
+        bytes calldata eventData
     ) internal override {
-        // Security: verify this is a Resolved event.
-        // The emitter address is already filtered by the precompile subscription —
-        // only events from the resolved Market contract reach here.
-        require(
-            eventTopics[0] == keccak256("Resolved(uint32,uint256[])"),
-            "!Resolved"
-        );
+        bytes32 eventSignature = eventTopics[0];
 
-        // If market resolves while duel is still open (no Player B joined),
-        // automatically refund Player A's stake — zero manual intervention.
-        if (state == WagerState.CREATED) {
-            _executeCancelRefund();
-            emit ReactiveAutoRefunded(block.timestamp, block.number);
+        if (eventSignature == RESOLVED_TOPIC) {
+            // Filter: only react if this Resolved event is for OUR market.
+            // Event data layout: abi.encode(uint32 marketId, uint256[] payoutNumerators)
+            if (eventData.length >= 32) {
+                uint32 eventMarketId = uint32(uint256(bytes32(eventData[:32])));
+                uint32 myMarketId = uint32(uint256(marketId));
+                if (eventMarketId != myMarketId) return; // not our market, ignore
+            }
+
+            // If market resolves while duel is still open (no Player B joined),
+            // automatically refund Player A's stake.
+            if (state == WagerState.CREATED) {
+                _executeCancelRefund();
+                emit ReactiveAutoRefunded(block.timestamp, block.number);
+                return;
+            }
+
+            if (state != WagerState.LOCKED) return;
+
+            settlementTriggeredAt = block.timestamp;
+
+            // Re-resolve if stored address is dead (Era 3 DreamDEX)
+            address mktAddr = resolvedMarketContract;
+            if (!_hasCode(mktAddr)) {
+                mktAddr = _resolveMarketContract(marketId);
+            }
+
+            if (_hasCode(mktAddr)) {
+                IBinaryMarket market = IBinaryMarket(mktAddr);
+                if (market.isVoided()) {
+                    _executeRefund();
+                    emit ReactiveVoided(block.timestamp, block.number);
+                } else {
+                    settle();
+                    emit ReactiveSettled(block.timestamp, block.number);
+                }
+            } else {
+                // Market cannot be resolved — refund both players
+                _executeRefund();
+                emit ReactiveVoided(block.timestamp, block.number);
+            }
             return;
-        }
-
-        // Only process if we're in LOCKED state (both players joined, waiting for resolution)
-        if (state != WagerState.LOCKED) return;
-
-        // Record the exact block timestamp for latency measurement
-        settlementTriggeredAt = block.timestamp;
-
-        // Check if the market was voided (oracle failure, dispute, etc.)
-        IBinaryMarket market = IBinaryMarket(resolvedMarketContract);
-        if (market.isVoided()) {
-            // Voided: both players get their stake back
-            _executeRefund();
-            emit ReactiveVoided(block.timestamp, block.number);
-        } else {
-            // Normal resolution: determine winner and distribute pot
-            settle();
-            emit ReactiveSettled(block.timestamp, block.number);
         }
     }
 
@@ -248,8 +254,17 @@ contract Wager is SomniaEventHandler {
     ///      Can be called manually OR triggered automatically by _onEvent().
     ///      After settlement, unsubscribes from reactivity and sweeps leftover
     ///      subscription fund back to the factory for reuse.
+    ///      If resolvedMarketContract has no code (Era 3 DreamDEX bug), re-resolves
+    ///      from BinaryMarketsModule at settlement time to recover stuck duels.
     function settle() public inState(WagerState.LOCKED) {
-        IBinaryMarket market = IBinaryMarket(resolvedMarketContract);
+        // If stored address is dead, re-resolve from the module
+        address marketAddr = resolvedMarketContract;
+        if (!_hasCode(marketAddr)) {
+            marketAddr = _resolveMarketContract(marketId);
+            require(_hasCode(marketAddr), "cannot resolve market");
+        }
+
+        IBinaryMarket market = IBinaryMarket(marketAddr);
         require(market.isResolved(), "not resolved");
         require(!market.isVoided(), "voided use refund()");
 
@@ -292,25 +307,27 @@ contract Wager is SomniaEventHandler {
     /// @dev Resolve the canonical Market contract address from BinaryMarketsModule.
     ///      The Market contract emits Resolved events — it is NOT the same as marketAddress
     ///      (which may be a CLOB reactivity address with no EVM code).
+    ///      If the market address (index 8) has no code (Era 3 DreamDEX), falls back
+    ///      to the pool address (index 9) which does have code.
     function _resolveMarketContract(bytes32 _marketId) internal view returns (address) {
+        uint256 moduleCodeSize;
+        assembly { moduleCodeSize := extcodesize(BINARY_MARKETS_MODULE) }
+        if (moduleCodeSize == 0) return address(0); // no module (tests)
+
         (bool ok, bytes memory result) = BINARY_MARKETS_MODULE.staticcall(
             abi.encodeWithSignature("markets(bytes32)", _marketId)
         );
-        if (!ok || result.length < 320) return address(0); // 10 words * 32 bytes
+        if (!ok || result.length < 320) return address(0); // need at least 10 fields (index 9)
 
-        // Decode the MarketRecord struct. The `market` field is at word index 8.
-        // In memory, result = <32-byte length><word0><word1>...<word13>
-        // Word 8 starts at result + 32 + (8 * 32) = result + 288
-        // The address occupies the last 20 bytes of the word (bytes 12-31).
         address marketAddr;
-        assembly {
-            // Read word 8 and mask to get the address (lower 20 bytes)
-            marketAddr := and(
-                mload(add(result, 288)),
-                0xffffffffffffffffffffffffffffffffffffffff
-            )
-        }
-        return marketAddr;
+        assembly { marketAddr := mload(add(result, 288)) } // index 8 = market
+
+        if (_hasCode(marketAddr)) return marketAddr;
+
+        // Market address has no code (Era 3 DreamDEX) — fall back to pool address (index 9)
+        address poolAddr;
+        assembly { poolAddr := mload(add(result, 320)) } // index 9 = pool
+        return poolAddr;
     }
 
     /// @dev Check if an address has contract code deployed.
@@ -380,20 +397,20 @@ contract Wager is SomniaEventHandler {
             "!authorized"
         );
         if (subscriptionId != 0) {
-            SomniaExtensions.unsubscribe(subscriptionId);
-            emit SubscriptionCancelled(subscriptionId);
+            (bool unsubOk, ) = address(0x0100).call(
+                abi.encodeWithSignature("unsubscribe(uint256)", subscriptionId)
+            );
+            if (unsubOk) emit SubscriptionCancelled(subscriptionId);
             subscriptionId = 0;
         }
     }
 
-    /// @dev Cancel reactivity subscription and sweep remaining fund back to factory.
+    /// @dev Cancel the reactivity subscription and sweep remaining fund back to factory.
     ///      Called at the end of settle() and refund(). Non-critical: if unsubscribe
     ///      fails, we still sweep the fund — the subscription becomes orphaned but
     ///      the clone balance is recovered.
     function _reclaimSubscriptionFund() internal {
-        // 1. Cancel the subscription (stops future charges)
         if (subscriptionId != 0) {
-            // Use low-level call so a precompile failure does not revert settle().
             (bool unsubOk, ) = address(0x0100).call(
                 abi.encodeWithSignature("unsubscribe(uint256)", subscriptionId)
             );
@@ -401,7 +418,6 @@ contract Wager is SomniaEventHandler {
             subscriptionId = 0;
         }
 
-        // 2. Sweep remaining balance back to factory
         uint256 remaining = address(this).balance;
         if (remaining > 0) {
             subscriptionFund = 0;

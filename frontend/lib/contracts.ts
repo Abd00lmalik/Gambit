@@ -1,5 +1,5 @@
-export const FACTORY_ADDRESS = "0x087b04Cdf0598b9a53aCAd72522374e059Bc88DF" as const;
-export const IMPLEMENTATION_ADDRESS = "0xE154043A0d59412C87DF67B802C9e27858A0682a" as const;
+export const FACTORY_ADDRESS = "0x256E05956B0C93735163a96d366865315f6e0A14" as const;
+export const IMPLEMENTATION_ADDRESS = "0xD2383487546eAdF0266A80c65d9F70aA7EB44173" as const;
 export const FEE_RECIPIENT = "0x25265b9dBEb6c653b0CA281110Bb0697a9685107" as const;
 export const DEX_EVENT_CONTRACTS_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
 export const BINARY_MARKETS_MODULE_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
@@ -459,7 +459,7 @@ export enum DuelState {
 
 export const DUEL_STATE_LABELS: Record<DuelState, string> = {
   [DuelState.CREATED]: "Open",
-  [DuelState.LOCKED]: "Locked",
+  [DuelState.LOCKED]: "Live",
   [DuelState.SETTLED]: "Settled",
   [DuelState.REFUNDED]: "Refunded",
   [DuelState.CANCELLED]: "Cancelled",

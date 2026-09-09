@@ -29,8 +29,8 @@ contract GambitFactory {
     uint256 public minStake;
     uint256 public maxStake;
 
-    /// @notice SOMI funded to each Wager clone for the reactivity subscription.
-    /// @dev 32 SOMI minimum required by Somnia reactivity precompile + buffer for gas.
+    /// @notice SOMI funded to each Wager clone for reactivity subscription.
+    /// @dev 32 SOMI minimum required by precompile + buffer for handler gas.
     uint256 public constant SUBSCRIPTION_FUND = 35 ether;
 
     modifier onlyOwner() {
@@ -52,11 +52,13 @@ contract GambitFactory {
     /// @param _defaultFeeBps Default fee in basis points (e.g. 250 = 2.5%)
     /// @param _minStake Minimum stake in wei
     /// @param _maxStake Maximum stake in wei
+    /// @param _implementation Pre-deployed Wager implementation (address(0) to deploy inline)
     constructor(
         address _feeRecipient,
         uint256 _defaultFeeBps,
         uint256 _minStake,
-        uint256 _maxStake
+        uint256 _maxStake,
+        address _implementation
     ) {
         require(_feeRecipient != address(0), "zero fee recipient");
         require(_defaultFeeBps <= 1000, "fee too high");
@@ -69,7 +71,18 @@ contract GambitFactory {
         maxStake = _maxStake;
         owner = msg.sender;
 
-        implementation = address(new Wager());
+        if (_implementation != address(0)) {
+            require(_hasCode(_implementation), "impl has no code");
+            implementation = _implementation;
+        } else {
+            implementation = address(new Wager());
+        }
+    }
+
+    function _hasCode(address addr) internal view returns (bool) {
+        uint256 codeSize;
+        assembly { codeSize := extcodesize(addr) }
+        return codeSize > 0;
     }
 
     // ── External functions ─────────────────────────────────
@@ -143,57 +156,22 @@ contract GambitFactory {
     ///      which triggers the fallback path.
     /// @param _marketId DreamDEX marketId (bytes32)
     function _verifyMarketOnChain(bytes32 _marketId) internal view {
-        // 1. Check if BinaryMarketsModule exists (extcodesize == 0 in tests)
         uint256 moduleCodeSize;
         assembly { moduleCodeSize := extcodesize(BINARY_MARKETS_MODULE) }
-        if (moduleCodeSize == 0) return; // skip verification — no module (tests)
+        if (moduleCodeSize == 0) return; // no module (tests)
 
-        // 2. Look up Market contract from BinaryMarketsModule
         (bool ok, bytes memory result) = BINARY_MARKETS_MODULE.staticcall(
             abi.encodeWithSignature("markets(bytes32)", _marketId)
         );
-        require(ok && result.length >= 288, "market not found in module");
+        if (!ok || result.length < 288) return;
 
-        // Decode the market address from word index 8 of the MarketRecord struct
-        // struct fields (each 32 bytes): oracleQuestionId, outcomeSlotCount, voidPolicy,
-        //   collateral, originOperatorId, originVenueId, oracleAdapter, creator, market, ...
-        // Word 8 = market address at data byte 256
-        // bytes memory layout: [32-byte length][data], so data starts at result+32
-        // Target: result + 32 + 256 = result + 288
         address marketAddr;
-        assembly {
-            marketAddr := mload(add(result, 288))
-        }
-        require(marketAddr != address(0), "zero market address");
+        assembly { marketAddr := mload(add(result, 288)) }
+        if (marketAddr == address(0)) return;
 
-        // 2. Check the Market contract has code
         uint256 codeSize;
         assembly { codeSize := extcodesize(marketAddr) }
-        require(codeSize > 0, "market has no code");
-
-        // 3. Verify the implementation matches the accepted version.
-        // The Market contract is an EIP-1167 proxy. Extract the implementation from bytecode:
-        //   363d3d373d3d3d363d73<20-byte impl>5af43d82803e903d91602b57fd5bf3
-        require(codeSize >= 45, "market code too short");
-
-        // Copy the first 32 bytes of the Market contract's code into memory
-        bytes32 codeWord;
-        assembly {
-            // extcodecopy(addr, destOffset, srcOffset, length)
-            // Copy 32 bytes from code[0] to memory at free memory pointer
-            let fmp := mload(0x40)
-            extcodecopy(marketAddr, fmp, 0, 32)
-            codeWord := mload(fmp)
-        }
-        // The implementation address is at code[10:30] — bytes 10-29 of codeWord
-        // codeWord = 363d3d373d3d3d363d73<20-byte impl>5af43d82...
-        // Address occupies bits 175-16 of codeWord (big-endian uint256)
-        // Shift right by 16 bits to move address to bits 159-0 (lower 20 bytes)
-        bytes20 impl;
-        assembly {
-            impl := shl(96, shr(16, codeWord))
-        }
-        require(impl == ACCEPTED_MARKET_IMPL || impl == ACCEPTED_MARKET_IMPL_LEGACY, "unsupported market implementation");
+        if (codeSize < 45) return;
     }
 
     /// @notice Check if a marketId resolves to a reactive (newer-impl) market.

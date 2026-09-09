@@ -65,7 +65,7 @@ library SomniaExtensions {
                 priorityFeePerGas: options.priorityFeePerGas,
                 maxFeePerGas: options.maxFeePerGas,
                 gasLimit: options.gasLimit,
-                isGuaranteed: true,
+                isGuaranteed: false,
                 isCoalesced: false
             });
 

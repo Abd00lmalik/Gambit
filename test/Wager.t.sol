@@ -5,18 +5,31 @@ import "forge-std/Test.sol";
 import {Wager} from "../contracts/Wager.sol";
 import {GambitFactory} from "../contracts/GambitFactory.sol";
 
-/// @dev Mock DreamDEX market for testing
+/// @dev Mock DreamDEX market for testing — emits events like the real contracts
 contract MockMarket {
     uint8 private _status;
     uint256[] private _payoutNumerators;
     bool private _isVoided;
+
+    event Resolved(uint32 indexed outcome, uint256[] payoutNumerators);
+    event StatusChanged(uint8 indexed oldStatus, uint8 indexed newStatus);
+    event Voided();
 
     constructor(uint8 status_, bool voided_) {
         _status = status_;
         _isVoided = voided_;
     }
 
-    function setStatus(uint8 s) external { _status = s; }
+    function setStatus(uint8 s) external {
+        uint8 old = _status;
+        _status = s;
+        emit StatusChanged(old, s);
+        if (s == 4) {
+            emit Resolved(0, _payoutNumerators);
+        } else if (s == 5) {
+            emit Voided();
+        }
+    }
     function setPayout(uint256 up, uint256 down) external {
         _payoutNumerators = new uint256[](2);
         _payoutNumerators[0] = up;
@@ -84,7 +97,8 @@ contract GambitTest is Test {
             address(feeRecipient),
             FEE_BPS,
             MIN_STAKE,
-            MAX_STAKE
+            MAX_STAKE,
+            address(0)
         );
 
         // Deploy mock markets
@@ -372,7 +386,7 @@ contract GambitTest is Test {
     function test_feeMath_exactCalculation() public {
         // Deploy factory with 0 fee
         GambitFactory noFeeFactory = new GambitFactory(
-            address(feeRecipient), 0, MIN_STAKE, MAX_STAKE
+            address(feeRecipient), 0, MIN_STAKE, MAX_STAKE, address(0)
         );
 
         uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
@@ -406,7 +420,7 @@ contract GambitTest is Test {
     function test_feeMath_highFee() public {
         // 10% fee (1000 bps)
         GambitFactory highFeeFactory = new GambitFactory(
-            address(feeRecipient), 1000, MIN_STAKE, MAX_STAKE
+            address(feeRecipient), 1000, MIN_STAKE, MAX_STAKE, address(0)
         );
 
         uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
@@ -442,7 +456,7 @@ contract GambitTest is Test {
         // 1 wei stake — tests integer division rounding
         uint256 tinyStake = 1 ether; // Use 1 ETH to have clean division
         GambitFactory roundingFactory = new GambitFactory(
-            address(feeRecipient), 333, MIN_STAKE, MAX_STAKE
+            address(feeRecipient), 333, MIN_STAKE, MAX_STAKE, address(0)
         );
 
         uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
@@ -742,7 +756,7 @@ contract GambitTest is Test {
     function test_factory_feeCap() public {
         // Factory rejects fees > 1000 bps
         vm.expectRevert("fee too high");
-        new GambitFactory(address(feeRecipient), 1001, MIN_STAKE, MAX_STAKE);
+        new GambitFactory(address(feeRecipient), 1001, MIN_STAKE, MAX_STAKE, address(0));
     }
 
     function test_getPot() public {
@@ -772,7 +786,7 @@ contract GambitTest is Test {
 
     function test_settle_reclaimsSubscriptionFund() public {
         uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
-        uint256 subFund = 35 ether;
+        uint256 subFund = factory.SUBSCRIPTION_FUND();
 
         // Fund factory with enough for subscription
         vm.deal(address(factory), subFund);
@@ -814,7 +828,7 @@ contract GambitTest is Test {
 
     function test_refund_reclaimsSubscriptionFund() public {
         uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
-        uint256 subFund = 35 ether;
+        uint256 subFund = factory.SUBSCRIPTION_FUND();
 
         vm.deal(address(factory), subFund);
 
@@ -846,7 +860,7 @@ contract GambitTest is Test {
 
     function test_cancel_reclaimsSubscriptionFund() public {
         uint256 deadline = block.timestamp + 1 hours;
-        uint256 subFund = 35 ether;
+        uint256 subFund = factory.SUBSCRIPTION_FUND();
 
         vm.deal(address(factory), subFund);
 
@@ -876,7 +890,7 @@ contract GambitTest is Test {
 
     function test_factory_balanceRecycled() public {
         uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
-        uint256 subFund = 35 ether;
+        uint256 subFund = factory.SUBSCRIPTION_FUND();
 
         // Factory starts with 70 STT — enough for 2 duels
         vm.deal(address(factory), subFund * 2);
@@ -984,12 +998,12 @@ contract GambitTest is Test {
 
     function test_withdraw_doesNotBreakActiveDuels() public {
         uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
-        uint256 subFund = 35 ether;
+        uint256 subFund = factory.SUBSCRIPTION_FUND();
 
-        // Factory starts with 70 STT
+        // Factory starts with 2×SUBSCRIPTION_FUND
         vm.deal(address(factory), subFund * 2);
 
-        // Create duel 1 (uses 35 STT for subscription)
+        // Create duel 1 (uses subFund for subscription)
         vm.deal(alice, STAKE);
         vm.prank(alice);
         address clone1 = factory.createDuel{value: STAKE}(
@@ -1005,15 +1019,15 @@ contract GambitTest is Test {
         vm.prank(bob);
         Wager(payable(clone1)).join();
 
-        // Factory has 35 STT remaining (70 - 35)
+        // Factory has subFund remaining (2*subFund - subFund)
         assertEq(address(factory).balance, subFund);
 
-        // Owner withdraws 20 STT — still leaves 15 STT for future duels
+        // Owner withdraws 20 STT
         vm.prank(address(this));
         factory.withdraw(alice, 20 ether);
 
-        // Factory now has 15 STT
-        assertEq(address(factory).balance, 15 ether);
+        // Factory now has subFund - 20 STT
+        assertEq(address(factory).balance, subFund - 20 ether);
 
         // Duel 1 still works — clone has its own funds
         uint256 aliceBalBefore = alice.balance;
