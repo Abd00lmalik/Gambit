@@ -271,7 +271,12 @@ contract Wager is SomniaEventHandler {
         uint256[] memory p = market.payoutNumerators();
         require(p.length >= 2, "bad payout");
         require(p[0] != 0 || p[1] != 0, "no payout set");
-        require(p[0] != p[1], "split/voided");
+
+        // Split/void result: both outcomes paid equally → refund both players
+        if (p[0] == p[1]) {
+            _executeRefund();
+            return;
+        }
 
         state = WagerState.SETTLED;
 
@@ -381,11 +386,28 @@ contract Wager is SomniaEventHandler {
     }
 
     /// @notice Factory-initiated cancel for expired CREATED duels.
-    /// @dev Allows the keeper to automatically refund creators when deadline passes
-    ///      and nobody joined. Permissionless after deadline — prevents stuck funds.
+    /// @dev Allows the keeper to automatically refund creators when:
+    ///      (a) joinDeadline passed and nobody joined, OR
+    ///      (b) market resolved before deadline — creator gets stake back immediately
+    ///          since no one would join after resolution. Prevents stuck funds.
     function factoryCancel() external inState(WagerState.CREATED) {
         require(msg.sender == factory, "!factory");
-        require(block.timestamp > joinDeadline, "deadline not reached");
+
+        bool deadlinePassed = block.timestamp > joinDeadline;
+        if (!deadlinePassed) {
+            // Before deadline: only allow if market already resolved
+            address marketAddr = resolvedMarketContract;
+            if (!_hasCode(marketAddr)) {
+                marketAddr = _resolveMarketContract(marketId);
+            }
+            if (_hasCode(marketAddr)) {
+                IBinaryMarket market = IBinaryMarket(marketAddr);
+                require(market.isResolved(), "deadline not reached");
+            } else {
+                require(false, "deadline not reached");
+            }
+        }
+
         _executeCancelRefund();
         emit FactoryCancelled(block.timestamp);
     }

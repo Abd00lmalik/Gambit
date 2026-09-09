@@ -280,7 +280,7 @@ async function sendTx(
     functionName,
     account: walletClient.account!,
     nonce,
-    gas: BigInt(10_000_000),
+    gas: BigInt(50_000_000),
   });
   const hash = await walletClient.writeContract(request);
   return publicClient.waitForTransactionReceipt({ hash });
@@ -304,7 +304,7 @@ async function sendFactoryTx(
     args: [clone],
     account: walletClient.account!,
     nonce,
-    gas: BigInt(10_000_000),
+    gas: BigInt(50_000_000),
   });
   const hash = await walletClient.writeContract(request);
   return publicClient.waitForTransactionReceipt({ hash });
