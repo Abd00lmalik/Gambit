@@ -369,13 +369,14 @@ async function scanAndProcess(
   const clones: { clone: Address; factory: Address }[] = [];
   const scanStart = Date.now();
 
-  // Max blocks to scan per run — conservative to stay under 25s
-  const MAX_SCAN_BLOCKS = 500;
+  // Max blocks to scan per run — generous on cold start to find all duels,
+  // time budget will naturally cap actual scan time
+  const MAX_SCAN_BLOCKS = 100_000;
 
-  // On cold start, only scan the 2 most recent factories (v24, v23) — old factories
-  // are unlikely to have active duels. This cuts cold-start scan from 8 to 2 factories.
+  // On cold start, scan all factories but start from their deploy blocks
+  // (knownDuels map is lost between Vercel serverless invocations)
   const isColdStart = !lastScannedBlock.has(KNOWN_FACTORIES[0].address);
-  const factoriesToScan = isColdStart ? KNOWN_FACTORIES.slice(0, 2) : KNOWN_FACTORIES;
+  const factoriesToScan = isColdStart ? KNOWN_FACTORIES : KNOWN_FACTORIES;
 
   // Scan DuelCreated events from known factories
   for (const factory of factoriesToScan) {
@@ -385,9 +386,10 @@ async function scanAndProcess(
     }
     // Resume from last scanned block, or start from factory deploy block
     const cached = lastScannedBlock.get(factory.address) ?? factory.deployBlock;
-    // On first cold-start run, only scan last MAX_SCAN_BLOCKS to avoid timeout
+    // On first cold-start run, scan from deploy block (not limited to recent blocks)
+    // The time budget will naturally cap how far we get
     const startBlock = cached === factory.deployBlock
-      ? (latest > BigInt(MAX_SCAN_BLOCKS) ? latest - BigInt(MAX_SCAN_BLOCKS) : factory.deployBlock)
+      ? factory.deployBlock
       : cached + BigInt(1);
     const effectiveStart = startBlock < factory.deployBlock ? factory.deployBlock : startBlock;
 
