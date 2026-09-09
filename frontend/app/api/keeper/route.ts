@@ -469,9 +469,7 @@ async function scanAndProcess(
     const persistedBlock = await getPersistedBlock(factory.address);
     const startBlock = persistedBlock > BigInt(0)
       ? persistedBlock + BigInt(1)
-      : latest > BigInt(COLD_START_SCAN_BLOCKS)
-        ? latest - BigInt(COLD_START_SCAN_BLOCKS)
-        : factory.deployBlock;
+      : factory.deployBlock;
     const effectiveStart = startBlock < factory.deployBlock ? factory.deployBlock : startBlock;
 
     // Skip if already up to date
