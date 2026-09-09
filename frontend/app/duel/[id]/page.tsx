@@ -117,11 +117,11 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const isJoiner = connectedAddress?.toLowerCase() === duel.playerB?.toLowerCase();
   const hasJoined = !!duel.playerB && duel.playerB !== "0x0000000000000000000000000000000000000000";
 
-  // Determine winner: payoutNumerators[1] = Up/Yes (player A wins), [2] = Down/No (player B wins)
+  // Determine winner: payoutNumerators[0] = Up/Yes (player A wins), [1] = Down/No (player B wins)
   const isWinner = (() => {
-    if (!effectiveIsResolved || !effectivePayouts || effectivePayouts.length < 3) return false;
-    const upWins = Number(effectivePayouts[1]) > 0;
-    const downWins = Number(effectivePayouts[2]) > 0;
+    if (!effectiveIsResolved || !effectivePayouts || effectivePayouts.length < 2) return false;
+    const upWins = Number(effectivePayouts[0]) > 0;
+    const downWins = Number(effectivePayouts[1]) > 0;
     if (upWins) return isCreator;
     if (downWins) return isJoiner;
     return false;
