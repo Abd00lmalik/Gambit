@@ -45,6 +45,8 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
       }
 
       onUploaded?.(data.pfpUrl);
+      // Clear preview so the component uses the proxy endpoint for display
+      setPreview(null);
     } catch (e) {
       setError("Upload failed. Try again.");
     } finally {
@@ -52,7 +54,9 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
     }
   };
 
-  const displayUrl = preview || currentPfp;
+  // During upload: show local data URL preview (immediate feedback)
+  // After upload / idle: use proxy endpoint which generates fresh signed URLs
+  const displayUrl = preview || (currentPfp && address ? `/api/pfp/${address.toLowerCase()}` : null);
 
   return (
     <div className="relative group">

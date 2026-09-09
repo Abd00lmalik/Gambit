@@ -112,7 +112,7 @@ export default function ProfilePage({
             />
           ) : profile?.pfp_url ? (
             <img
-              src={profile.pfp_url}
+              src={`/api/pfp/${address.toLowerCase()}`}
               alt="Profile"
               className="h-20 w-20 rounded-full object-cover border-2 border-teal/30 mb-4"
             />
