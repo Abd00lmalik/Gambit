@@ -423,7 +423,7 @@ export default function CreateDuelPage() {
 
             {/* Live chart */}
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
-              <LiveChart asset={asset} strike={strike} />
+              <LiveChart asset={asset} strike={strike} currentPrice={strike} />
             </motion.div>
 
             {/* Side picker */}

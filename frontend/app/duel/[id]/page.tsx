@@ -13,6 +13,7 @@ import MarketSentimentBar from "@/components/MarketSentimentBar";
 import OracleVerification from "@/components/OracleVerification";
 import { useDuelReads, useDuelActions, useMarketStatus, useResolvedMarketAddress } from "@/hooks/useContracts";
 import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
+import { useLivePrices } from "@/hooks/useLivePrices";
 import { DuelState, DUEL_STATE_LABELS, DUEL_STATE_COLORS } from "@/lib/contracts";
 import { fetchMarketByAddress, DreamDexMarket } from "@/lib/dreamdex";
 
@@ -89,6 +90,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const [marketLoading, setMarketLoading] = useState(true);
 
   const duel = useDuelReads(duelAddress);
+  const prices = useLivePrices();
   const { resolvedMarketAddress } = useResolvedMarketAddress(duel.marketId);
   // Use resolved Market contract for on-chain IBinaryMarket reads (isResolved, status, etc.)
   // NOT the raw CLOB listing address from duel.marketAddress, which may have no EVM code
@@ -272,7 +274,11 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           transition={{ delay: 0.2 }}
           className="mb-6"
         >
-          <LiveChart asset={marketData?.asset ?? "BTC"} strike={marketData?.openingPrice ?? 0} />
+          <LiveChart
+            asset={marketData?.asset ?? "BTC"}
+            strike={marketData?.openingPrice ?? 0}
+            currentPrice={prices.find(p => p.asset === (marketData?.asset ?? "BTC"))?.price}
+          />
         </motion.div>
 
         {/* Strike Price Display */}

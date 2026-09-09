@@ -7,19 +7,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing address" }, { status: 400 });
   }
 
-  // Debug: check if Supabase env vars are set
-  const debug = req.nextUrl.searchParams.get("debug");
-  if (debug) {
-    return NextResponse.json({
-      hasSupabaseUrl: !!process.env.SUPABASE_URL,
-      hasNextPublicSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-      hasSupabaseAnonKey: !!process.env.SUPABASE_ANON_KEY,
-      hasNextPublicSupabaseAnonKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-      supabaseUrl: process.env.SUPABASE_URL?.slice(0, 30) || "not set",
-      envKeys: Object.keys(process.env).filter(k => k.includes("SUPA") || k.includes("POSTGRES") || k.includes("VERCEL")).join(", "),
-    });
-  }
-
   try {
     const profile = await getOrCreateProfile(address);
     const duels = await getUserDuelsFromDb(address);

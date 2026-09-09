@@ -1,16 +1,29 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useMemo } from "react";
 
 interface LiveChartProps {
   asset: string;
   strike: number;
+  currentPrice?: number;
   showOverlay?: boolean;
   compact?: boolean;
 }
 
-export default function LiveChart({ asset, strike, showOverlay = true, compact = false }: LiveChartProps) {
+export default function LiveChart({ asset, strike, currentPrice, showOverlay = true, compact = false }: LiveChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Calculate strike line Y position based on price range
+  // Uses ±5% around currentPrice as the visible window
+  const strikeTopPct = useMemo(() => {
+    if (!currentPrice || !strike || currentPrice === 0) return 50;
+    const rangePct = 0.05; // ±5%
+    const high = currentPrice * (1 + rangePct);
+    const low = currentPrice * (1 - rangePct);
+    if (strike >= high || strike <= low) return 50; // out of range, center it
+    // Map strike to 0-100% (0% = top/high, 100% = bottom/low)
+    return ((high - strike) / (high - low)) * 100;
+  }, [strike, currentPrice]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -52,10 +65,13 @@ export default function LiveChart({ asset, strike, showOverlay = true, compact =
       />
       {showOverlay && (
         <>
-          {/* Strike line overlay */}
-          <div className="absolute left-0 right-0 top-1/2 pointer-events-none z-10">
+          {/* Strike line overlay — positioned based on price ratio */}
+          <div
+            className="absolute left-0 right-0 pointer-events-none z-10"
+            style={{ top: `${strikeTopPct}%` }}
+          >
             <div className="border-t border-dashed border-teal/50 relative">
-              <span className="absolute right-2 -top-5 bg-carbon/90 border border-teal/30 rounded px-2 py-0.5 font-body text-[10px] text-teal backdrop-blur-sm">
+              <span className="absolute right-2 -top-5 bg-carbon/90 border border-teal/30 rounded px-2 py-0.5 font-body text-[10px] text-teal backdrop-blur-sm whitespace-nowrap">
                 Strike ${strike.toLocaleString()}
               </span>
             </div>
