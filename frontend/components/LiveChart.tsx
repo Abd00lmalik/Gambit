@@ -14,10 +14,10 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Calculate strike line Y position based on price range
-  // Uses ±10% around currentPrice as the visible window
+  // TradingView 1-min chart typically shows ~±1.5-2% around current price
   const strikeTopPct = useMemo(() => {
     if (!currentPrice || !strike || strike === 0 || currentPrice === 0) return null;
-    const rangePct = 0.10; // ±10%
+    const rangePct = 0.02; // ±2% — matches typical TradingView 1-min visible range
     const high = currentPrice * (1 + rangePct);
     const low = currentPrice * (1 - rangePct);
     if (strike >= high || strike <= low) return null; // out of range, don't render

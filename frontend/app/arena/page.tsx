@@ -87,8 +87,9 @@ function ArenaContent() {
   const highlightedRef = useRef(false);
 
   // P3: Refetch duels when user returns to tab (e.g., after joining in another tab)
+  // Force full resync to pick up state changes (settlements, joins) that happened while away
   useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible") refetch(); };
+    const onVisible = () => { if (document.visibilityState === "visible") refetch(true); };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refetch]);

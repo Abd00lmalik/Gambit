@@ -324,11 +324,11 @@ async function processDuel(
     return null;
   }
 
+  log(`  [${clone.slice(0, 10)}] state=${info.state} deadline=${info.joinDeadline} market=${info.resolvedMarketContract.slice(0, 10)}...`);
+
   if (FINAL.has(info.state)) return null;
 
   // ── Market resolution (3-tier with fallback) ───────────
-  // If we can't determine resolution, we still try settle/cancel because
-  // the on-chain contract handles its own resolution internally.
   let market;
   let resolutionSource = "unknown";
   try {
@@ -362,8 +362,11 @@ async function processDuel(
       }
     }
 
+    log(`  resolvedAddr=${resolvedAddr?.slice(0, 10) ?? "null"} source=${resolutionSource}`);
     market = await withTimeout(getMarketStatus(resolvedAddr ?? undefined, publicClient), RPC_TIMEOUT_MS, `getMarketStatus`);
-  } catch {
+    log(`  market status: exists=${market.exists} resolved=${market.resolved} voided=${market.voided}`);
+  } catch (e: any) {
+    log(`  market resolution error: ${e.message?.slice(0, 80)}`);
     market = { exists: false, resolved: false, voided: false };
   }
 
@@ -385,55 +388,56 @@ async function processDuel(
     }
   }
 
-    // LOCKED: both joined — settle or refund
-    if (info.state === LOCKED) {
-      if (market.voided) {
-        log(`REFUND ${clone} — market voided`);
-        try {
-          const r = await sendTx(walletClient, publicClient, clone, "refund");
-          log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
-          return r.transactionHash;
-        } catch (e: any) {
-          log(`  FAIL ${e.shortMessage || e.message?.slice(0, 100)}`);
-          return null;
-        }
-      }
-
-      if (market.resolved) {
-        log(
-          `SETTLE ${clone} — pot: ${formatEther(info.stakeAmount * BigInt(2))} STT (via ${resolutionSource})`
-        );
-        try {
-          const r = await sendTx(walletClient, publicClient, clone, "settle");
-          log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
-          return r.transactionHash;
-        } catch (e: any) {
-          log(`  FAIL ${e.shortMessage || e.message?.slice(0, 100)}`);
-          return null;
-        }
-      }
-
-      // CRITICAL FALLBACK: If we can't confirm resolution but deadline passed,
-      // try settle() anyway. The on-chain Wager contract has its own
-      // _resolveMarketContract() fallback that can find the correct market address
-      // even when our off-chain lookup fails. If the market truly isn't resolved,
-      // the tx will revert harmlessly.
-      if (deadlinePassed) {
-        log(
-          `SETTLE-ATTEMPT ${clone} — market resolved=${market.resolved} exists=${market.exists}, trying on-chain settle (deadline passed)`
-        );
-        try {
-          const r = await sendTx(walletClient, publicClient, clone, "settle");
-          log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
-          return r.transactionHash;
-        } catch (e: any) {
-          // Expected if market genuinely isn't resolved yet
-          log(`  FAIL (market may not be resolved yet) ${e.shortMessage || e.message?.slice(0, 80)}`);
-          return null;
-        }
+  // LOCKED: both joined — settle or refund
+  if (info.state === LOCKED) {
+    if (market.voided) {
+      log(`REFUND ${clone} — market voided`);
+      try {
+        const r = await sendTx(walletClient, publicClient, clone, "refund");
+        log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
+        return r.transactionHash;
+      } catch (e: any) {
+        log(`  FAIL ${e.shortMessage || e.message?.slice(0, 100)}`);
+        return null;
       }
     }
 
+    if (market.resolved) {
+      log(
+        `SETTLE ${clone} — pot: ${formatEther(info.stakeAmount * BigInt(2))} STT (via ${resolutionSource})`
+      );
+      try {
+        const r = await sendTx(walletClient, publicClient, clone, "settle");
+        log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
+        return r.transactionHash;
+      } catch (e: any) {
+        log(`  FAIL ${e.shortMessage || e.message?.slice(0, 100)}`);
+        return null;
+      }
+    }
+
+    // CRITICAL FALLBACK: If we can't confirm resolution but deadline passed,
+    // try settle() anyway. The on-chain Wager contract has its own
+    // _resolveMarketContract() fallback that can find the correct market address
+    // even when our off-chain lookup fails. If the market truly isn't resolved,
+    // the tx will revert harmlessly.
+    if (deadlinePassed) {
+      log(
+        `SETTLE-ATTEMPT ${clone} — market resolved=${market.resolved} exists=${market.exists}, trying on-chain settle (deadline passed)`
+      );
+      try {
+        const r = await sendTx(walletClient, publicClient, clone, "settle");
+        log(`  OK tx: ${r.transactionHash} gas: ${r.gasUsed}`);
+        return r.transactionHash;
+      } catch (e: any) {
+        // Expected if market genuinely isn't resolved yet
+        log(`  FAIL (market may not be resolved yet) ${e.shortMessage || e.message?.slice(0, 80)}`);
+        return null;
+      }
+    }
+  }
+
+  log(`  no action taken for state=${info.state}`);
   return null;
 }
 

@@ -173,7 +173,7 @@ export function useDuelCreatedEvents() {
     } catch {}
   }, []);
 
-  const fetchDuels = useCallback(async () => {
+  const fetchDuels = useCallback(async (forceFullResync = false) => {
     if (!client) return;
     if (isInitialLoad.current) setIsLoading(true);
 
@@ -181,7 +181,7 @@ export function useDuelCreatedEvents() {
       const latest = await client.getBlockNumber();
 
       // P4: Periodic full resync to prevent cache drift
-      const shouldFullResync = pollCount.current > 0 && pollCount.current % FULL_RESYNC_INTERVAL === 0;
+      const shouldFullResync = forceFullResync || (pollCount.current > 0 && pollCount.current % FULL_RESYNC_INTERVAL === 0);
       pollCount.current += 1;
 
       let allLogs: any[];
