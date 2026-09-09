@@ -10,6 +10,7 @@ import { somnia, config } from "@/lib/config";
 import { FACTORY_ADDRESS, WAGER_ABI, DREAMDEX_ABI, BINARY_MARKETS_MODULE_ADDRESS, BINARY_MARKETS_MODULE_ABI } from "@/lib/contracts";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
 import AssetIcon from "@/components/AssetIcon";
+import PlayerAvatar from "@/components/PlayerAvatar";
 import CountdownTimer from "@/components/CountdownTimer";
 
 const AUTO_SETTLE_INTERVAL_MS = 30000; // Check every 30s on Arena page
@@ -405,18 +406,14 @@ function DuelCardOnChain({
 
       <div className="space-y-1.5 mb-3">
         <div className="flex items-center gap-2">
-          <div className="h-5 w-5 rounded-full bg-teal/15 flex items-center justify-center text-[10px] font-bold text-teal">
-            A
-          </div>
+          <PlayerAvatar address={duel.playerA} label="A" />
           <span className="font-mono text-[11px] text-gray-400 truncate">
             {duel.playerA.slice(0, 6)}...{duel.playerA.slice(-4)}
           </span>
         </div>
         {hasJoined ? (
           <div className="flex items-center gap-2">
-            <div className="h-5 w-5 rounded-full bg-down/15 flex items-center justify-center text-[10px] font-bold text-down">
-              B
-            </div>
+            <PlayerAvatar address={duel.playerB} label="B" />
             <span className="font-mono text-[11px] text-gray-400 truncate">
               {duel.playerB.slice(0, 6)}...{duel.playerB.slice(-4)}
             </span>

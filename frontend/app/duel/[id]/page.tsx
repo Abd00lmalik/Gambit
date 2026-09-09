@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { useAccount } from "wagmi";
 import { formatEther, type Address } from "viem";
 import AssetIcon from "@/components/AssetIcon";
+import PlayerAvatar from "@/components/PlayerAvatar";
 import CountdownTimer from "@/components/CountdownTimer";
 import SettlementLatency from "@/components/SettlementLatency";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
@@ -575,11 +576,7 @@ function PlayerCard({ label, address, side, stake, isCreator, isActive }: {
           : "border-white/10 bg-white/[0.03]"
       }`}
     >
-      <div className={`h-10 w-10 md:h-12 md:w-12 rounded-full flex items-center justify-center font-display text-lg font-bold ${
-        isUp ? "bg-up/15 text-up" : "bg-down/15 text-down"
-      }`}>
-        {label}
-      </div>
+      <PlayerAvatar address={address} label={label} size="md" />
       <span className="font-mono text-[11px] text-gray-400 text-center">
         {address.slice(0, 6)}...{address.slice(-4)}
       </span>
