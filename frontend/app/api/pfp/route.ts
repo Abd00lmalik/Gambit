@@ -33,6 +33,8 @@ export async function POST(req: NextRequest) {
     const addr = address.toLowerCase();
     const ext = file.name.split(".").pop() || "jpg";
 
+    console.log(`PFP upload: ${addr}, type=${file.type}, size=${file.size}, ext=${ext}`);
+
     const blob = await put(`pfps/${addr}.${ext}`, file, {
       access: "private",
       contentType: file.type,
@@ -40,8 +42,16 @@ export async function POST(req: NextRequest) {
       allowOverwrite: true,
     });
 
-    // Store the signed URL directly (works for private blobs)
-    await updateProfilePfp(addr, blob.url);
+    console.log(`PFP blob stored: ${blob.url}`);
+
+    const saved = await updateProfilePfp(addr, blob.url);
+    if (!saved) {
+      console.error("PFP upload: DB save failed for", addr);
+      return NextResponse.json(
+        { error: "Failed to save profile" },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ pfpUrl: blob.url });
   } catch (e: any) {

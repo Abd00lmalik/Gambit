@@ -14,10 +14,10 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Calculate strike line Y position based on price range
-  // Uses ±15% around currentPrice as the visible window
+  // Uses ±10% around currentPrice as the visible window
   const strikeTopPct = useMemo(() => {
     if (!currentPrice || !strike || strike === 0 || currentPrice === 0) return null;
-    const rangePct = 0.15; // ±15%
+    const rangePct = 0.10; // ±10%
     const high = currentPrice * (1 + rangePct);
     const low = currentPrice * (1 - rangePct);
     if (strike >= high || strike <= low) return null; // out of range, don't render
@@ -65,20 +65,20 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
       />
       {showOverlay && strikeTopPct !== null && (
         <>
-          {/* Strike line overlay — positioned based on price ratio */}
+          {/* Strike line overlay — white, positioned at opening price */}
           <div
             className="absolute left-0 right-0 pointer-events-none z-10"
             style={{ top: `${strikeTopPct}%` }}
           >
-            <div className="border-t border-dashed border-teal/50 relative">
-              <span className="absolute right-2 -top-5 bg-carbon/90 border border-teal/30 rounded px-2 py-0.5 font-body text-[10px] text-teal backdrop-blur-sm whitespace-nowrap">
+            <div className="border-t-2 border-dashed border-white/70 relative">
+              <span className="absolute right-2 -top-5 bg-carbon/90 border border-white/30 rounded px-2 py-0.5 font-body text-[10px] text-white backdrop-blur-sm whitespace-nowrap">
                 Strike ${strike.toLocaleString()}
               </span>
             </div>
           </div>
           {/* Resolution window shading */}
-          <div className="absolute top-0 right-0 bottom-0 w-1/4 bg-gradient-to-l from-teal/5 to-transparent pointer-events-none z-10">
-            <span className="absolute top-2 right-2 font-body text-[10px] text-teal/60 uppercase tracking-wider">
+          <div className="absolute top-0 right-0 bottom-0 w-1/4 bg-gradient-to-l from-white/5 to-transparent pointer-events-none z-10">
+            <span className="absolute top-2 right-2 font-body text-[10px] text-white/60 uppercase tracking-wider">
               Resolution
             </span>
           </div>

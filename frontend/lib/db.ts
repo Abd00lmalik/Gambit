@@ -106,25 +106,25 @@ export async function updateProfilePfp(
   address: string,
   pfpUrl: string
 ): Promise<boolean> {
-  if (!supabase) return false;
+  if (!supabase) {
+    console.warn("updateProfilePfp: no supabase client");
+    return false;
+  }
   const addr = address.toLowerCase();
   try {
-    // Ensure profile exists
-    await supabase
-      .from("wallet_profiles")
-      .insert({ address: addr })
-      .select()
-      .maybeSingle();
-
+    // Upsert: insert if not exists, update if exists
     const { error } = await supabase
       .from("wallet_profiles")
-      .update({ pfp_url: pfpUrl, updated_at: new Date().toISOString() })
-      .eq("address", addr);
+      .upsert(
+        { address: addr, pfp_url: pfpUrl, updated_at: new Date().toISOString() },
+        { onConflict: "address" }
+      );
 
     if (error) {
-      console.warn("updateProfilePfp error:", error.message);
+      console.warn("updateProfilePfp upsert error:", error.message, error.details);
       return false;
     }
+    console.log("updateProfilePfp: saved pfp for", addr);
     return true;
   } catch (e) {
     console.warn("updateProfilePfp failed:", e);
