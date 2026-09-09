@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 import { useAccount } from "wagmi";
-import { formatEther, type Address } from "viem";
+import { type Address } from "viem";
 import AssetIcon from "@/components/AssetIcon";
 import PlayerAvatar from "@/components/PlayerAvatar";
 import CountdownTimer from "@/components/CountdownTimer";
@@ -34,53 +34,6 @@ async function fetchMarketExpiry(marketAddress: string): Promise<number | null> 
   }
 }
 
-// P1: Auto-trigger settle() for older-impl markets when market resolves
-// This is permissionless - anyone can call settle() once the market is resolved
-function useAutoSettle({
-  duelAddress,
-  state,
-  marketAddress,
-  marketIsResolved,
-  settleDuel,
-  isSettling,
-}: {
-  duelAddress: Address | undefined;
-  state: number | undefined;
-  marketAddress: Address | undefined;
-  marketIsResolved: boolean;
-  settleDuel: () => Promise<any>;
-  isSettling: boolean;
-}) {
-  const settlingRef = useRef(false);
-  const hasAutoSettledRef = useRef(false);
-
-  const triggerSettle = useCallback(async () => {
-    if (settlingRef.current || hasAutoSettledRef.current || !duelAddress || !marketAddress) return;
-    if (state !== DuelState.LOCKED || !marketIsResolved) return;
-
-    settlingRef.current = true;
-    try {
-      await settleDuel();
-      hasAutoSettledRef.current = true;
-    } catch (e) {
-      // Ignore errors - another caller may have succeeded
-      console.debug("Auto-settle failed (may have been called by another):", e);
-    } finally {
-      settlingRef.current = false;
-    }
-  }, [duelAddress, marketAddress, state, marketIsResolved, settleDuel]);
-
-  // Trigger on mount and when conditions change
-  useEffect(() => {
-    if (state === DuelState.LOCKED && marketIsResolved && !isSettling) {
-      triggerSettle();
-    }
-  }, [state, marketIsResolved, isSettling, triggerSettle]);
-
-  // Also expose a manual trigger for the UI
-  return { triggerSettle, isAutoSettling: settlingRef.current };
-}
-
 export default function DuelPage({ params }: { params: { id: string } }) {
   const { id } = params;
   const duelAddress = id as Address;
@@ -107,19 +60,10 @@ export default function DuelPage({ params }: { params: { id: string } }) {
     }
   }, [actions.joinStep, duel.refetch]);
 
-  // P1: Auto-trigger settle() for older-impl markets when market resolves
-  // This is permissionless - anyone visiting the page can trigger it
-  // MUST be called before any early returns (Rules of Hooks)
-  // Use pool fallback: if market address resolved check fails, try pool address
+  // Determine effective market resolution (market or pool fallback)
   const effectiveIsResolved = (market.isResolved ?? false) || (poolMarket.isResolved ?? false);
-  const autoSettle = useAutoSettle({
-    duelAddress,
-    state: duel.state,
-    marketAddress: resolvedMarketAddress,
-    marketIsResolved: effectiveIsResolved,
-    settleDuel: actions.settleDuel,
-    isSettling: actions.isPending,
-  });
+  // Use whichever market resolved for payout check
+  const effectivePayouts = market.payoutNumerators ?? poolMarket.payoutNumerators;
 
   // Fetch market data from DreamDEX indexer (reuses Create Duel logic)
   useEffect(() => {
@@ -173,6 +117,16 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const isJoiner = connectedAddress?.toLowerCase() === duel.playerB?.toLowerCase();
   const hasJoined = !!duel.playerB && duel.playerB !== "0x0000000000000000000000000000000000000000";
 
+  // Determine winner: payoutNumerators[1] = Up/Yes (player A wins), [2] = Down/No (player B wins)
+  const isWinner = (() => {
+    if (!effectiveIsResolved || !effectivePayouts || effectivePayouts.length < 3) return false;
+    const upWins = Number(effectivePayouts[1]) > 0;
+    const downWins = Number(effectivePayouts[2]) > 0;
+    if (upWins) return isCreator;
+    if (downWins) return isJoiner;
+    return false;
+  })();
+
   // P1: Detect stuck duels — CREATED state, deadline passed, market resolved
   // The reactive auto-refund should have fired but didn't (subscription missing or callback reverted)
   const deadlinePassed = !!duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
@@ -200,12 +154,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
               state === DuelState.LOCKED ? "bg-yellow-400 animate-glow-pulse" :
               state === DuelState.SETTLED ? "bg-up" : "bg-gray-400"
             }`} />
-            {isStuck ? "Stuck — Recovery Needed" : 
-             autoSettle.isAutoSettling ? "Auto-Settling..." : 
-             DUEL_STATE_LABELS[state]}
-            {autoSettle.isAutoSettling && (
-              <span className="ml-1.5 h-3 w-3 border-2 border-teal border-t-transparent rounded-full animate-spin" />
-            )}
+            {isStuck ? "Stuck — Recovery Needed" : DUEL_STATE_LABELS[state]}
           </span>
         </motion.div>
 
@@ -345,14 +294,14 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           >
             <span className="font-body text-xs text-gray-400">Resolves in</span>
             <CountdownTimer targetTimestamp={marketData.expiry} size="lg" variant="resolve" />
-            {market.isResolved && (
-              <span className="font-body text-sm text-up">Market resolved — settling...</span>
+            {effectiveIsResolved && (
+              <span className="font-body text-sm text-up">Market resolved — claim below</span>
             )}
           </motion.div>
         )}
 
         {/* Expiry notice if passed but not yet resolved */}
-        {state === DuelState.LOCKED && marketData && marketData.expiry && Math.floor(Date.now() / 1000) > marketData.expiry && !market.isResolved && (
+        {state === DuelState.LOCKED && marketData && marketData.expiry && Math.floor(Date.now() / 1000) > marketData.expiry && !effectiveIsResolved && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -397,10 +346,35 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </button>
           )}
 
-          {/* Settle button (if both joined and market resolved) - includes auto-settle for older-impl */}
-          {hasJoined && state === DuelState.LOCKED && market.isResolved && (
+          {/* Claim button — only visible to the winner when market resolved */}
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isWinner && (
             <button
-              disabled={actions.isPending || isChecking || autoSettle.isAutoSettling}
+              disabled={actions.isPending || isChecking}
+              onClick={async () => {
+                try {
+                  if (!isCorrectNetwork) {
+                    await ensureCorrectNetwork();
+                    return;
+                  }
+                  await actions.settleDuel();
+                } catch {}
+              }}
+              className="min-h-[52px] w-full rounded-xl bg-up py-3 font-display text-base font-bold text-carbon transition-all hover:bg-up/80 hover:shadow-lg hover:shadow-up/20 active:scale-[0.97] disabled:opacity-70"
+            >
+              {actions.isPending
+                ? "Claiming..."
+                : isChecking
+                  ? "Switching Network..."
+                  : !isCorrectNetwork
+                    ? "Switch to Somnia Testnet"
+                    : "Claim Winnings →"}
+            </button>
+          )}
+
+          {/* Market resolved but not the winner or can't determine winner — show settle for anyone (permissionless) */}
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isWinner && (
+            <button
+              disabled={actions.isPending || isChecking}
               onClick={async () => {
                 try {
                   if (!isCorrectNetwork) {
@@ -412,9 +386,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
               }}
               className="min-h-[52px] w-full rounded-xl bg-teal py-3 font-display text-base font-bold text-carbon transition-all hover:bg-teal-light hover:shadow-lg hover:shadow-teal/20 active:scale-[0.97] disabled:opacity-70"
             >
-              {autoSettle.isAutoSettling
-                ? "Auto-settling..."
-                : actions.isPending
+              {actions.isPending
                 ? "Settling..."
                 : isChecking
                   ? "Switching Network..."
@@ -515,7 +487,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           )}
 
           {/* Waiting for resolution */}
-          {hasJoined && state === DuelState.LOCKED && !market.isResolved && (
+          {hasJoined && state === DuelState.LOCKED && !effectiveIsResolved && (
             <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-4 text-center">
               <p className="font-body text-sm text-yellow-400">Waiting for DreamDEX market to resolve...</p>
             </div>
