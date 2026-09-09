@@ -182,6 +182,32 @@ async function resolveMarket(
   return ((r as any).market ?? (r as any)[8]) as Address;
 }
 
+// Resolve pool address from BinaryMarketsModule (index 9 in the tuple).
+// Used as fallback when the market address (index 8) has no code (Era 3 DreamDEX).
+async function resolvePoolAddress(
+  marketId: `0x${string}`,
+  publicClient: PublicClient
+): Promise<Address | null> {
+  const code = await publicClient.getCode({ address: BINARY_MARKETS_MODULE });
+  if (!code || code === "0x") return null;
+  const c = getContract({
+    address: BINARY_MARKETS_MODULE,
+    abi: BINARY_MARKETS_MODULE_ABI,
+    client: publicClient,
+  });
+  const r = await c.read.markets([marketId]);
+  return ((r as any).pool ?? (r as any)[9]) as Address;
+}
+
+// Check if an address has deployed contract code
+async function hasCode(
+  addr: Address,
+  publicClient: PublicClient
+): Promise<boolean> {
+  const code = await publicClient.getCode({ address: addr });
+  return !!code && code !== "0x";
+}
+
 // ── Transaction helpers ──────────────────────────────────
 async function sendTx(
   walletClient: WalletClient,
@@ -247,10 +273,31 @@ async function processDuel(
 
   let market;
   try {
-    const resolvedAddr =
-      info.resolvedMarketContract !== ZERO_ADDR
-        ? info.resolvedMarketContract
-        : await withTimeout(resolveMarket(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolveMarket`);
+    // Step 1: Determine the best address to check market resolution
+    let resolvedAddr: Address | null = null;
+
+    if (info.resolvedMarketContract !== ZERO_ADDR) {
+      // Try the stored address first — check if it actually has code
+      if (await hasCode(info.resolvedMarketContract, publicClient)) {
+        resolvedAddr = info.resolvedMarketContract;
+      } else {
+        // Stored address is dead (no code) — this is the Era 3 DreamDEX bug.
+        // Try re-resolving from BinaryMarketsModule, then fall back to pool address.
+        log(`  dead resolvedMarketContract ${info.resolvedMarketContract} — re-resolving`);
+        resolvedAddr = await withTimeout(resolveMarket(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolveMarket`);
+        if (!resolvedAddr || !(await hasCode(resolvedAddr, publicClient))) {
+          // Market address also dead — try pool address (Era 3 pools DO have code)
+          resolvedAddr = await withTimeout(resolvePoolAddress(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolvePoolAddress`);
+        }
+      }
+    } else {
+      // No stored address — resolve from scratch
+      resolvedAddr = await withTimeout(resolveMarket(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolveMarket`);
+      if (!resolvedAddr || !(await hasCode(resolvedAddr, publicClient))) {
+        resolvedAddr = await withTimeout(resolvePoolAddress(info.marketId, publicClient), RPC_TIMEOUT_MS, `resolvePoolAddress`);
+      }
+    }
+
     market = await withTimeout(getMarketStatus(resolvedAddr ?? undefined, publicClient), RPC_TIMEOUT_MS, `getMarketStatus`);
   } catch {
     market = { exists: false, resolved: false, voided: false };

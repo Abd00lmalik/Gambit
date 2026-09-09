@@ -264,7 +264,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           transition={{ delay: 0.2 }}
           className="mb-6"
         >
-          <LiveChart asset="BTC" strike={marketData?.openingPrice ?? 0} />
+          <LiveChart asset={marketData?.asset ?? "BTC"} strike={marketData?.openingPrice ?? 0} />
         </motion.div>
 
         {/* Strike Price Display */}
@@ -275,7 +275,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             transition={{ delay: 0.25 }}
             className="flex items-center justify-center gap-3 mb-6 p-3 glass rounded-xl text-center"
           >
-            <AssetIcon asset="BTC" className="h-5 w-5" />
+            <AssetIcon asset={marketData?.asset ?? "BTC"} className="h-5 w-5" />
             <span className="font-display text-lg font-bold text-foam">
               Strike: ${marketData.openingPrice.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
