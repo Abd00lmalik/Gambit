@@ -97,14 +97,44 @@ export async function updateProfilePfp(
   if (!sql) return false;
   const addr = address.toLowerCase();
   try {
+    // Ensure profile exists first
     await sql`
+      INSERT INTO wallet_profiles (address) VALUES (${addr})
+      ON CONFLICT (address) DO NOTHING
+    `;
+    const result = await sql`
       UPDATE wallet_profiles
       SET pfp_url = ${pfpUrl}, updated_at = NOW()
       WHERE address = ${addr}
     `;
-    return true;
+    return result.rowCount > 0;
   } catch (e) {
     console.warn("updateProfilePfp failed:", e);
+    return false;
+  }
+}
+
+export async function updateProfileDisplayName(
+  address: string,
+  displayName: string
+): Promise<boolean> {
+  if (!sql) return false;
+  const addr = address.toLowerCase();
+  const name = displayName.trim() || null;
+  try {
+    // Ensure profile exists first
+    await sql`
+      INSERT INTO wallet_profiles (address) VALUES (${addr})
+      ON CONFLICT (address) DO NOTHING
+    `;
+    const result = await sql`
+      UPDATE wallet_profiles
+      SET display_name = ${name}, updated_at = NOW()
+      WHERE address = ${addr}
+    `;
+    return result.rowCount > 0;
+  } catch (e) {
+    console.warn("updateProfileDisplayName failed:", e);
     return false;
   }
 }

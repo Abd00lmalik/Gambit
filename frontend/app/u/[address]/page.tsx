@@ -25,7 +25,7 @@ export default function ProfilePage({
   const addressLower = address.toLowerCase();
   const { address: connectedAddress } = useAccount();
   const { duels, isLoading: chainLoading } = useDuelCreatedEvents();
-  const { profile, isLoading: dbLoading } = useSupabaseProfile(address);
+  const { profile, isLoading: dbLoading, refetch: refetchProfile } = useSupabaseProfile(address);
 
   const isOwnProfile =
     connectedAddress?.toLowerCase() === addressLower;
@@ -108,7 +108,7 @@ export default function ProfilePage({
           {isOwnProfile ? (
             <PfpUpload
               currentPfp={profile?.pfp_url}
-              onUploaded={() => {}}
+              onUploaded={() => refetchProfile()}
             />
           ) : profile?.pfp_url ? (
             <img
@@ -132,6 +132,7 @@ export default function ProfilePage({
               <DisplayNameEdit
                 currentName={profile?.display_name}
                 address={address}
+                onSaved={() => refetchProfile()}
               />
             </div>
           )}
