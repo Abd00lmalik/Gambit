@@ -76,13 +76,20 @@ export default function ArenaPage() {
 
 function ArenaContent() {
   const { address: connectedAddress, isConnected } = useAccount();
-  const { duels, isLoading } = useDuelCreatedEvents();
+  const { duels, isLoading, refetch } = useDuelCreatedEvents();
   const [filter, setFilter] = useState<string>("All");
   const [sort, setSort] = useState<"newest" | "stake">("newest");
   const searchParams = useSearchParams();
   const highlight = searchParams.get("highlight");
   const highlightRef = useRef<string | null>(null);
   const highlightedRef = useRef(false);
+
+  // P3: Refetch duels when user returns to tab (e.g., after joining in another tab)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") refetch(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refetch]);
   const client = usePublicClient({ chainId: somnia.id });
   const settledCheckRef = useRef<Set<string>>(new Set());
 

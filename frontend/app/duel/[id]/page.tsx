@@ -95,6 +95,13 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const actions = useDuelActions(duelAddress);
   const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
 
+  // Refetch duel data after join completes
+  useEffect(() => {
+    if (actions.joinStep === "done") {
+      duel.refetch();
+    }
+  }, [actions.joinStep, duel.refetch]);
+
   // P1: Auto-trigger settle() for older-impl markets when market resolves
   // This is permissionless - anyone visiting the page can trigger it
   // MUST be called before any early returns (Rules of Hooks)

@@ -110,8 +110,14 @@ export default function CreateDuelPage() {
 
       const marketAddress = selectedMarket.marketAddress;
       const marketId = selectedMarket.marketId;
-      const deadline = INTERVAL_SEC[selectedInterval];
-      const hash = await createDuel(marketAddress, marketId, deadline, String(stakeAmount));
+      const nowSec = Math.floor(Date.now() / 1000);
+      const calculatedDeadline = nowSec + INTERVAL_SEC[selectedInterval];
+      const marketExpiry = selectedMarket.expiry;
+      // joinDeadline must NEVER be after market expiry — cap at 60s before expiry
+      const deadline = marketExpiry > 0 ? Math.min(calculatedDeadline, marketExpiry - 60) : calculatedDeadline;
+      // Ensure deadline is always in the future
+      const finalDeadline = Math.max(deadline, nowSec + 60);
+      const hash = await createDuel(marketAddress, marketId, finalDeadline - nowSec, String(stakeAmount));
 
       // Wait for receipt BEFORE showing success screen.
       // Never show "Duel Created!" based on hash alone — the tx may have reverted on-chain.
