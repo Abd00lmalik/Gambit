@@ -132,7 +132,7 @@ const g304 = await get(W1, { "if-none-match": etag! });
 assert.equal(g304.status, 304, "If-None-Match → 304 (bandwidth saver)");
 const gFresh = await get(W1, { "if-none-match": '"stale-etag"' });
 assert.equal(gFresh.status, 200);
-assert.equal(gFresh.headers.get("cache-control"), "public, max-age=60");
+assert.equal(gFresh.headers.get("cache-control"), "public, max-age=0, must-revalidate");
 ok("ETag/304 + short per-address Cache-Control");
 
 // ── 8. DB records are per-address too ─────────────────────────

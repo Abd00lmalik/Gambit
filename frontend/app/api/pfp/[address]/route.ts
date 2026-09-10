@@ -32,7 +32,9 @@ export async function GET(
       status: 304,
       headers: {
         ETag: etag,
-        "Cache-Control": "public, max-age=60",
+        // must-revalidate: the store can serve the previous version for ~1s
+        // after an overwrite; max-age caching would extend that staleness.
+        "Cache-Control": "public, max-age=0, must-revalidate",
       },
     });
   }
@@ -41,7 +43,7 @@ export async function GET(
     headers: {
       "Content-Type": blob.contentType,
       "Content-Length": String(blob.bytes.byteLength),
-      "Cache-Control": "public, max-age=60",
+      "Cache-Control": "public, max-age=0, must-revalidate",
       ETag: etag,
       "X-Pfp-Pathname": blob.pathname,
     },

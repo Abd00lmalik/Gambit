@@ -13,10 +13,11 @@ import MarketSentimentBar from "@/components/MarketSentimentBar";
 import OracleVerification from "@/components/OracleVerification";
 import { useDuelReads, useDuelActions, useMarketStatus, useResolvedMarketAddress } from "@/hooks/useContracts";
 import { useOracleResolution } from "@/hooks/useOracleResolution";
+import { deriveDuelView, duelEndedMessage } from "@/lib/duelViewState";
 import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
 import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { useLivePrices } from "@/hooks/useLivePrices";
-import { DuelState, DUEL_STATE_LABELS, DUEL_STATE_COLORS } from "@/lib/contracts";
+import { DuelState } from "@/lib/contracts";
 import { fetchMarketByAddress, DreamDexMarket } from "@/lib/dreamdex";
 
 const LiveChart = dynamic(() => import("@/components/LiveChart"), { ssr: false });
@@ -188,6 +189,22 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   // Uses factory.cancelDuel() which is permissionless and works before deadline if market resolved
   const canCreatorRefund = state === DuelState.CREATED && !hasJoined && isCreator && effectiveIsResolved;
 
+  // ── Shared derived view state ────────────────────────────────────────────
+  // The on-chain Wager.state stays LOCKED until someone pushes settlement, so
+  // raw chain state alone made ended duels render as "Live" forever. The
+  // market/oracle pipeline is the authoritative terminal signal.
+  const duelView = deriveDuelView({
+    chainState: state,
+    hasJoined,
+    joinDeadline: duel.joinDeadline ?? undefined,
+    marketExpiry: marketData?.expiry ?? resolution?.expiry ?? undefined,
+    indexerFinalized: resolution?.indexerFinalized ?? false,
+    hasFinalAnswer: resolution?.hasOracleAnswer ?? false,
+    hasOpeningAnswer: resolution?.hasOracleAnswer ?? false,
+    nowSec,
+  });
+  const phase = duelView.phase;
+
   return (
     <div className="min-h-screen py-8 px-4">
       <div className="mx-auto max-w-4xl">
@@ -199,18 +216,20 @@ export default function DuelPage({ params }: { params: { id: string } }) {
         >
           <span className={`inline-flex items-center gap-2 rounded-full border px-4 py-1.5 font-body text-xs ${
             isStuck ? "border-down/20 bg-down/5 text-down" :
-            state === DuelState.CREATED ? "border-teal/20 bg-teal/5 text-teal" :
-            state === DuelState.LOCKED ? "border-yellow-400/20 bg-yellow-400/5 text-yellow-400" :
-            state === DuelState.SETTLED ? "border-up/20 bg-up/5 text-up" :
+            phase === "live" ? "border-yellow-400/20 bg-yellow-400/5 text-yellow-400" :
+            phase === "waiting" ? "border-teal/20 bg-teal/5 text-teal" :
+            phase === "settled" || phase === "ended-resolved" ? "border-up/20 bg-up/5 text-up" :
+            phase === "open-expired" ? "border-down/20 bg-down/5 text-down" :
             "border-white/10 bg-white/5 text-gray-400"
           }`}>
             <span className={`h-1.5 w-1.5 rounded-full ${
               isStuck ? "bg-down animate-glow-pulse" :
-              state === DuelState.CREATED ? "bg-teal animate-glow-pulse" :
-              state === DuelState.LOCKED ? "bg-yellow-400 animate-glow-pulse" :
-              state === DuelState.SETTLED ? "bg-up" : "bg-gray-400"
+              phase === "live" ? "bg-yellow-400 animate-glow-pulse" :
+              phase === "waiting" ? "bg-teal animate-glow-pulse" :
+              phase === "settled" || phase === "ended-resolved" ? "bg-up" :
+              phase === "open-expired" ? "bg-down" : "bg-gray-400"
             }`} />
-            {isStuck ? "Stuck — Recovery Needed" : DUEL_STATE_LABELS[state]}
+            {isStuck ? "Stuck — Recovery Needed" : duelView.label}
           </span>
         </motion.div>
 
@@ -227,7 +246,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             side={creatorSide}
             stake={duel.stakeAmount || "0"}
             isCreator
-            isActive={state === DuelState.LOCKED}
+            isActive={phase === "live"}
           />
           <div className="flex flex-col items-center max-w-md md:max-w-lg">
             <motion.span
@@ -264,14 +283,16 @@ export default function DuelPage({ params }: { params: { id: string } }) {
               address={duel.playerB!}
               side={joinerSide}
               stake={duel.stakeAmount || "0"}
-              isActive={state === DuelState.LOCKED}
+              isActive={phase === "live"}
             />
           ) : (
             <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-white/10 p-4 md:p-6 min-w-[140px] md:min-w-[180px]">
               <div className="h-10 w-10 md:h-12 md:w-12 rounded-full bg-white/5 flex items-center justify-center text-gray-500 text-lg">
                 ?
               </div>
-              <span className="font-body text-xs text-gray-500 text-center">Waiting for opponent</span>
+              <span className="font-body text-xs text-gray-500 text-center">
+                {phase === "open-expired" ? "No opponent — expired" : "Waiting for opponent"}
+              </span>
             </div>
           )}
         </motion.div>
@@ -341,7 +362,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
         )}
 
         {/* Resolution Countdown for LOCKED duels */}
-        {state === DuelState.LOCKED && marketData && marketData.expiry && (
+        {state === DuelState.LOCKED && marketData && marketData.expiry && phase === "live" && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -350,29 +371,37 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           >
             <span className="font-body text-xs text-gray-400">Resolves in</span>
             <CountdownTimer targetTimestamp={marketData.expiry} size="lg" variant="resolve" />
-            {effectiveIsResolved && (
-              <span className="font-body text-sm text-up">Market resolved — claim below</span>
-            )}
           </motion.div>
-        )}
-
-        {/* Expiry notice if passed but not yet verifiably resolved */}
-        {state === DuelState.LOCKED && marketData && marketData.expiry && nowSec >= marketData.expiry && !effectiveIsResolved && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            className="flex flex-col items-center gap-2 glass rounded-xl p-4 mb-6 border border-down/20 bg-down/5"
-          >
-            {/* P1: market contract may claim "resolved" with placeholder payouts
-                before the oracle finalizes — never show a winner in that window */}
-            <span className="font-body text-xs text-down">
-              {resolvedContractReportsResolved
-                ? "Market ended — waiting for DreamDEX oracle to finalize the result..."
-                : "Market expiry passed, awaiting resolution..."}
-            </span>
-          </motion.div>
-        )}
+        )}        {/* Terminal state banner — the contest is over (market window passed).
+            Deterministic from the market/oracle pipeline, not the on-chain
+            wager state (which stays LOCKED until someone pushes settlement). */}
+        {(() => {
+          const endedMessage = duelEndedMessage(duelView, {
+            hasJoined,
+            winnerSide: oracleWinningSide,
+            viewerSide: isCreator ? creatorSide : isJoiner ? joinerSide : null,
+          });
+          if (!endedMessage) return null;
+          return (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.4 }}
+              className={`flex flex-col items-center gap-2 glass rounded-xl p-4 mb-6 border ${
+                phase === "ended-pending" ? "border-yellow-400/20 bg-yellow-400/5" :
+                phase === "ended-resolved" ? "border-up/20 bg-up/5" :
+                "border-down/20 bg-down/5"
+              }`}>
+              {/* P1: market contract may claim "resolved" with placeholder payouts
+                  before the oracle finalizes — never show a winner in that window */}
+              <span className={`font-body text-sm text-center ${
+                phase === "ended-resolved" ? "text-up" : "text-gray-300"
+              }`}>
+                {endedMessage}
+              </span>
+            </motion.div>
+          );
+        })()}
 
         {/* Action buttons */}
         <motion.div
@@ -622,10 +651,10 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </div>
           )}
 
-          {/* Waiting for resolution */}
-          {hasJoined && state === DuelState.LOCKED && !effectiveIsResolved && (
+          {/* Contest in progress (market window still open) */}
+          {hasJoined && state === DuelState.LOCKED && phase === "live" && (
             <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-4 text-center">
-              <p className="font-body text-sm text-yellow-400">Waiting for DreamDEX market to resolve...</p>
+              <p className="font-body text-sm text-yellow-400">Contest live — the result is decided when the market closes.</p>
             </div>
           )}
 

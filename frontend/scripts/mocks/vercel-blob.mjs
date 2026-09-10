@@ -63,10 +63,31 @@ export async function get(pathnameOrUrl, options = {}) {
     err.name = "BlobNotFoundError";
     throw err;
   }
-  return new Response(entry.bytes, {
-    status: 200,
-    headers: { "Content-Type": entry.contentType, ETag: entry.etag },
+  // Mirror the real @vercel/blob v2 GetBlobResult shape: a discriminated union
+  // with { statusCode, stream, headers, blob: { ...meta } } — NOT a Response.
+  const bytes = entry.bytes instanceof ArrayBuffer ? new Uint8Array(entry.bytes) : new TextEncoder().encode(String(entry.bytes));
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
   });
+  return {
+    statusCode: 200,
+    stream,
+    headers: new Headers({ "Content-Type": entry.contentType, ETag: entry.etag }),
+    blob: {
+      url: `https://mock-store.public.blob.vercel-storage.com/${pathname}`,
+      downloadUrl: `https://mock-store.public.blob.vercel-storage.com/${pathname}?download=1`,
+      pathname,
+      contentDisposition: null,
+      cacheControl: "",
+      uploadedAt: new Date(entry.uploadedAt),
+      etag: entry.etag,
+      contentType: entry.contentType,
+      size: entry.bytes.byteLength,
+    },
+  };
 }
 
 export async function del(pathnames) {

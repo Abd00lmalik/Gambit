@@ -10,7 +10,9 @@ import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { somnia } from "@/lib/config";
 import { FACTORY_ADDRESS, FACTORY_ABI } from "@/lib/contracts";
 import { decodeEventLog } from "viem";
-import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
+import { DuelState } from "@/lib/contracts";
+import { deriveDuelView, type DuelView } from "@/lib/duelViewState";
+import { fetchMarketTerminalInfo, type MarketTerminalInfo } from "@/lib/dreamdex";
 import AssetIcon from "@/components/AssetIcon";
 import PlayerAvatar from "@/components/PlayerAvatar";
 import CountdownTimer from "@/components/CountdownTimer";
@@ -100,6 +102,19 @@ function ArenaContent() {
   }, [refetch]);
   const client = usePublicClient({ chainId: somnia.id });
 
+  // Batched market terminal info (expiry + oracle finalization) for all loaded
+  // duels — the input the shared state model needs to end LOCKED duels whose
+  // market window has closed.
+  const [terminalInfo, setTerminalInfo] = useState<Map<string, MarketTerminalInfo>>(new Map());
+  useEffect(() => {
+    if (duels.length === 0) return;
+    let cancelled = false;
+    fetchMarketTerminalInfo(duels.map((d) => d.address))
+      .then((m) => { if (!cancelled) setTerminalInfo(m); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [duels]);
+
   // Highlight effect
   useEffect(() => {
     if (!highlight || highlightedRef.current || !client || duels.length === 0)
@@ -137,11 +152,23 @@ function ArenaContent() {
       if (filter === "All") return true;
       // Asset filter
       if (filter === "BTC" || filter === "ETH") return d.asset === filter;
-      // Status filter
-      const deadlinePassed = d.joinDeadline && Math.floor(Date.now() / 1000) > d.joinDeadline;
-      if (filter === "Open") return d.state === DuelState.CREATED && !deadlinePassed;
-      if (filter === "Live") return d.state === DuelState.LOCKED;
-      if (filter === "Settled") return d.state === DuelState.SETTLED;
+      // Status filter — derived view state, so ended duels (expired market,
+      // LOCKED on-chain) do not keep matching the "Live" filter.
+      const view = terminalInfo.get(d.address.toLowerCase());
+      const derived = deriveDuelView({
+        chainState: d.state as DuelState,
+        hasJoined: d.playerB !== "0x0000000000000000000000000000000000000000",
+        joinDeadline: d.joinDeadline,
+        marketExpiry: view?.expiry ?? undefined,
+        indexerFinalized: view?.indexerFinalized ?? false,
+        hasFinalAnswer: view?.hasFinalAnswer ?? false,
+        hasOpeningAnswer: view?.hasOpeningAnswer ?? false,
+        nowSec: Math.floor(Date.now() / 1000),
+      });
+      if (filter === "Open") return derived.phase === "waiting";
+      if (filter === "Live") return derived.phase === "live";
+      if (filter === "Settled")
+        return derived.phase === "settled" || derived.phase === "ended-resolved" || derived.phase === "ended-pending";
       return true;
     })
     .sort((a, b) => {
@@ -235,6 +262,7 @@ function ArenaContent() {
                 >
                   <DuelCardOnChain
                     duel={duel}
+                    terminal={terminalInfo.get(duel.address.toLowerCase())}
                     isHighlighted={
                       highlightRef.current === duel.address.toLowerCase()
                     }
@@ -265,38 +293,58 @@ function PlayerName({ address }: { address: string }) {
 
 function DuelCardOnChain({
   duel,
+  terminal,
   isHighlighted,
 }: {
   duel: any;
+  terminal?: MarketTerminalInfo;
   isHighlighted?: boolean;
 }) {
-  const state = duel.state as DuelState;
-  const isOpen = state === DuelState.CREATED;
-  const isLive = state === DuelState.LOCKED;
-  const isSettled = state === DuelState.SETTLED;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const view = deriveDuelView({
+    chainState: duel.state as DuelState,
+    hasJoined: duel.playerB !== "0x0000000000000000000000000000000000000000",
+    joinDeadline: duel.joinDeadline,
+    marketExpiry: terminal?.expiry ?? undefined,
+    indexerFinalized: terminal?.indexerFinalized ?? false,
+    hasFinalAnswer: terminal?.hasFinalAnswer ?? false,
+    hasOpeningAnswer: terminal?.hasOpeningAnswer ?? false,
+    nowSec,
+  });
+  const { phase } = view;
+  const isOpen = phase === "waiting";
+  const isExpired = phase === "open-expired";
+  const isLive = phase === "live";
+  const isEnded = view.isEnded && !isExpired; // ended contest (pending or resolved)
+  const isSettled = phase === "settled";
 
-  const stateLabel = DUEL_STATE_LABELS[state] || "Unknown";
-  const hasJoined = duel.playerB !== "0x0000000000000000000000000000000000000000";
+  const stateColors: Record<string, string> = {
+    waiting: "border-down/30 bg-down/5 hover:border-down/50",
+    "open-expired": "border-down/20 bg-down/5",
+    live: "border-yellow-400/30 bg-yellow-400/5",
+    "ended-pending": "border-white/10 bg-white/[0.03]",
+    "ended-resolved": "border-up/20 bg-up/5",
+    settled: "border-up/30 bg-up/5",
+    refunded: "border-white/5 bg-white/[0.02]",
+    cancelled: "border-white/5 bg-white/[0.02]",
+  };
 
-  // P3: Detect expired duels — deadline has passed but state is still CREATED
-  const deadlinePassed = duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
-  const isExpired = isOpen && deadlinePassed;
-
-  const stateColors: Record<number, string> = {
-    [DuelState.CREATED]: "border-down/30 bg-down/5 hover:border-down/50",
-    [DuelState.LOCKED]: "border-yellow-400/30 bg-yellow-400/5",
-    [DuelState.SETTLED]: "border-up/30 bg-up/5",
-    [DuelState.CANCELLED]: "border-white/5 bg-white/[0.02]",
-    [DuelState.REFUNDED]: "border-white/5 bg-white/[0.02]",
+  const badgeClass: Record<string, string> = {
+    waiting: "bg-down/10 text-down border-down/20",
+    "open-expired": "bg-orange-400/10 text-orange-400 border-orange-400/20",
+    live: "bg-yellow-400/10 text-yellow-400 border-yellow-400/20",
+    "ended-pending": "bg-white/5 text-gray-400 border-white/10",
+    "ended-resolved": "bg-up/10 text-up border-up/20",
+    settled: "bg-up/10 text-up border-up/20",
+    refunded: "bg-white/5 text-gray-500 border-white/10",
+    cancelled: "bg-white/5 text-gray-500 border-white/10",
   };
 
   return (
     <a
       href={`/duel/${duel.address}`}
       className={`block rounded-2xl border p-4 transition-all duration-200 group cursor-pointer ${
-        isExpired
-          ? "border-down/20 bg-down/5 hover:border-down/30"
-          : stateColors[state] || "border-white/10 bg-white/[0.03]"
+        stateColors[phase] || "border-white/10 bg-white/[0.03]"
       } ${isHighlighted ? "ring-2 ring-teal shadow-lg shadow-teal/20" : ""}`}
     >
       <div className="flex items-center justify-between mb-3">
@@ -307,19 +355,15 @@ function DuelCardOnChain({
             <span className="font-body text-xs text-gray-400">{duel.asset || "BTC"} · Somnia</span>
         </div>
         <span className={`rounded-full border px-2.5 py-0.5 font-body text-[10px] font-medium uppercase tracking-wider ${
-          isExpired ? "bg-orange-400/10 text-orange-400 border-orange-400/20" :
-          isOpen ? "bg-down/10 text-down border-down/20" :
-          isLive ? "bg-yellow-400/10 text-yellow-400 border-yellow-400/20" :
-          isSettled ? "bg-up/10 text-up border-up/20" :
-          "bg-white/5 text-gray-500 border-white/10"
+          badgeClass[phase] || "bg-white/5 text-gray-500 border-white/10"
         }`}>
-          {isExpired ? "Expired" : stateLabel}
+          {view.label}
         </span>
       </div>
 
       <div className="flex items-center justify-between mb-3">
         <span className="font-display text-lg font-bold text-foam">{duel.stakeAmount} STT</span>
-        {hasJoined && !isSettled && (
+        {isLive && (
           <span className="text-xs text-yellow-400 font-medium">Live</span>
         )}
       </div>
@@ -329,7 +373,7 @@ function DuelCardOnChain({
           <PlayerAvatar address={duel.playerA} label="A" />
           <PlayerName address={duel.playerA} />
         </div>
-        {hasJoined ? (
+        {duel.playerB !== "0x0000000000000000000000000000000000000000" ? (
           <div className="flex items-center gap-2">
             <PlayerAvatar address={duel.playerB} label="B" />
             <PlayerName address={duel.playerB} />
@@ -347,12 +391,14 @@ function DuelCardOnChain({
           <span className="font-body text-[10px] text-down">Deadline passed</span>
         ) : isOpen && duel.joinDeadline ? (
           <CountdownTimer targetTimestamp={duel.joinDeadline} size="sm" variant="join" />
-        ) : (
-          <span className="font-body text-[10px] text-gray-500">
-            {isLive ? "Awaiting resolution" : isSettled ? "Resolved" : stateLabel}
+        ) : isEnded ? (
+          <span className="font-body text-[10px] text-gray-400">
+            {phase === "ended-resolved" ? "Result final" : "Awaiting oracle"}
           </span>
+        ) : (
+          <span className="font-body text-[10px] text-gray-500">{view.label}</span>
         )}
-        {(isOpen && !isExpired) && (
+        {isOpen && (
           <span className="text-teal text-xs group-hover:translate-x-1 transition-transform">→</span>
         )}
       </div>

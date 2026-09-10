@@ -12,14 +12,21 @@ import { BINARY_MARKETS_MODULE_ADDRESS, BINARY_MARKETS_MODULE_ABI } from "@/lib/
 export interface OracleResolution extends OracleResolutionData {
   /** The market's expiry has passed (clock check) */
   expiryPassed: boolean;
-  /** The oracle's resolution tx is confirmed on-chain (status success) */
+  /** The oracle's resolution tx is confirmed ON SOMNIA (informational —
+   *  DreamDEX's production oracle settles on its own chain, so its tx hashes
+   *  are intentionally NOT findable on the Somnia RPC; never gate on this) */
   oracleTxConfirmed: boolean;
-  /** Block timestamp of the oracle resolution tx */
+  /** Block timestamp of the oracle resolution tx (null when not on Somnia) */
   oracleTxBlockTime: number | null;
+  /** Both oracle answers exist (final + opening) and are not voided */
+  hasOracleAnswer: boolean;
   /**
-   * GENUINELY FINAL: expiry passed + indexer finalized + oracle answer present
-   * + resolution tx confirmed on-chain + not voided. Only then may a winner be
-   * displayed.
+   * GENUINELY FINAL: expiry passed + DreamDEX indexer finalized + oracle
+   * answers present. The indexer/oracle IS DreamDEX's settlement pipeline —
+   * the same source its own UI displays — so this is the authoritative
+   * terminal signal. (A previous gate also required the oracle tx receipt on
+   * the Somnia RPC, which can never pass for prod markets: those txs live on
+   * DreamDEX's settlement network, verified 2026-09-10.)
    */
   finalized: boolean;
   /** Winning side according to the oracle (null = cannot determine / voided) */
@@ -100,7 +107,7 @@ export function useOracleResolution(
       moduleExpiry: null, moduleStale: false, openingCents: null, finalCents: null,
       oracleTxHash: null, oracleVoided: false, oracleResolvedAt: null,
       expiryPassed: false, oracleTxConfirmed: false, oracleTxBlockTime: null,
-      finalized: false, winningSide: null, isLoading,
+      hasOracleAnswer: false, finalized: false, winningSide: null, isLoading,
     };
   }
 
@@ -116,11 +123,13 @@ export function useOracleResolution(
   const hasOracleAnswer =
     data.finalCents != null && data.openingCents != null && !data.oracleVoided;
 
+  // Terminal signal: DreamDEX's own indexer/oracle pipeline says the market is
+  // final AND the oracle produced both answers. The Somnia-receipt check is
+  // kept ONLY as diagnostics — DreamDEX oracle txs are not Somnia txs.
   const finalized =
     expiryPassed &&
     data.indexerFinalized &&
-    hasOracleAnswer &&
-    txConfirmed;
+    hasOracleAnswer;
 
   const winningSide: "UP" | "DOWN" | null = finalized
     ? data.finalCents! >= data.openingCents!
@@ -134,6 +143,7 @@ export function useOracleResolution(
     expiryPassed,
     oracleTxConfirmed: txConfirmed,
     oracleTxBlockTime: txBlockTime,
+    hasOracleAnswer,
     finalized,
     winningSide,
     isLoading,

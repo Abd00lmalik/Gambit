@@ -723,7 +723,122 @@ export async function fetchMarketByAddress(marketAddress: Address): Promise<Drea
     } catch {}
   }
   return null;
-return null;
+}
+
+export interface MarketTerminalInfo {
+  /** Market window end (UTC seconds) — the authoritative contest boundary */
+  expiry: number | null;
+  /** Indexer clobStatus is a final state (Finalized/Settled/Resolved) */
+  indexerFinalized: boolean;
+  /** OracleAnswer for the market question exists (non-voided) */
+  hasFinalAnswer: boolean;
+  /** OracleAnswer for the reference (opening) question exists */
+  hasOpeningAnswer: boolean;
+}
+
+/**
+ * Batch-fetch the market-side terminal signals for a list of duel market
+ * addresses (Arena listing scale: 2-3 batched queries for ~20 duels).
+ * Used with deriveDuelView so ended duels never render as LIVE.
+ */
+export async function fetchMarketTerminalInfo(addresses: string[]): Promise<Map<string, MarketTerminalInfo>> {
+  const result = new Map<string, MarketTerminalInfo>();
+  const unique = [...new Set(addresses.map((a) => a.toLowerCase()))];
+  if (unique.length === 0) return result;
+
+  // 1. Market rows (expiry, clobStatus, oracleQuestionId)
+  const BATCH = 50;
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const batch = unique.slice(i, i + BATCH);
+    const addrList = batch.map((a) => `"${a}"`).join(",");
+    const query = `{
+      Market(where: {marketAddress: {_in: [${addrList}]}}, limit: ${batch.length}) {
+        id marketAddress expiry clobStatus oracleQuestionId
+      }
+    }`;
+
+    for (const url of [PROD_GRAPHQL_URL, DEV_GRAPHQL_URL]) {
+      try {
+        const data = await gqlRaw(url, query);
+        const markets = data.Market ?? [];
+        for (const m of markets) {
+          if (!m.marketAddress) continue;
+          const s = String(m.clobStatus || "").toLowerCase();
+          result.set(m.marketAddress.toLowerCase(), {
+            expiry: m.expiry != null ? Number(m.expiry) : null,
+            indexerFinalized: s.includes("final") || s.includes("settl") || s.includes("resolv"),
+            hasFinalAnswer: false,
+            hasOpeningAnswer: false,
+            ...(m.oracleQuestionId ? { _oracleQuestionId: m.oracleQuestionId, _id: m.id } : {}),
+          } as MarketTerminalInfo);
+        }
+        if (markets.length > 0) break;
+      } catch {}
+    }
+  }
+
+  // 2. Oracle answers (final + opening) for the markets we found
+  const withOracle = [...result.entries()].filter(([, v]) => (v as any)._oracleQuestionId);
+  if (withOracle.length === 0) return result;
+
+  const finalIds = withOracle.map(([, v]) => (v as any)._oracleQuestionId as string);
+  const marketIds = withOracle.map(([, v]) => (v as any)._id as string);
+  const marketIdToAddr = new Map<string, string>();
+  for (const [addr, v] of withOracle) marketIdToAddr.set((v as any)._id as string, addr);
+
+  try {
+    const ansQuery = `{
+      OracleAnswer(where: {id: {_in: [${finalIds.map((id) => `"${id}"`).join(",")}]}}, limit: ${finalIds.length}) {
+        id numericValue voided
+      }
+    }`;
+    const ansData = await gqlRaw(PROD_GRAPHQL_URL, ansQuery);
+    for (const ans of ansData?.OracleAnswer ?? []) {
+      if (ans.voided) continue;
+      for (const [addr, v] of withOracle) {
+        if ((v as any)._oracleQuestionId === ans.id && ans.numericValue != null) {
+          (v as any).hasFinalAnswer = true;
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    const refQuery = `{
+      MarketReferenceLink(where: {market_id: {_in: [${marketIds.map((id) => `"${id}"`).join(",")}]}}, limit: ${marketIds.length}) {
+        market_id referenceQuestionId
+      }
+    }`;
+    const refData = await gqlRaw(PROD_GRAPHQL_URL, refQuery);
+    const links = refData?.MarketReferenceLink ?? [];
+    if (links.length > 0) {
+      const refIds = links.map((l: any) => l.referenceQuestionId).filter(Boolean);
+      if (refIds.length > 0) {
+        const oq = `{
+          OracleAnswer(where: {id: {_in: [${refIds.map((id: string) => `"${id}"`).join(",")}]}}, limit: ${refIds.length}) {
+            id numericValue
+          }
+        }`;
+        const odata = await gqlRaw(PROD_GRAPHQL_URL, oq);
+        const openingSet = new Set(
+          (odata?.OracleAnswer ?? []).filter((a: any) => a.numericValue != null).map((a: any) => a.id)
+        );
+        for (const l of links) {
+          const addr = marketIdToAddr.get(l.market_id);
+          if (addr && l.referenceQuestionId && openingSet.has(l.referenceQuestionId)) {
+            (result.get(addr) as any).hasOpeningAnswer = true;
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // Strip internal helper fields
+  for (const v of result.values()) {
+    delete (v as any)._oracleQuestionId;
+    delete (v as any)._id;
+  }
+  return result;
 }
 
 // Batch-fetch asset for multiple market addresses (returns Map<marketAddressLower, asset>)

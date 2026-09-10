@@ -133,6 +133,32 @@ export interface PfpBlob {
 }
 
 /**
+ * Read a ReadableStream into an ArrayBuffer without depending on the global
+ * Response constructor (works in Node and Edge runtimes alike).
+ */
+async function streamToBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
+  const chunks: Uint8Array[] = [];
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer;
+}
+
+/**
  * Read a wallet's PFP by scanning the per-address keys. Returns null when this
  * exact address has no PFP — never falls back to another key.
  */
@@ -152,13 +178,17 @@ export async function getPfpBlob(address: string): Promise<PfpBlob | null> {
     if (!meta) continue;
 
     try {
+      // @vercel/blob v2 returns a GetBlobResult: { statusCode, stream, headers,
+      // blob: { contentType, size, etag, ... } } — it has NO arrayBuffer(). The
+      // previous code called res.arrayBuffer(), threw, was swallowed by this
+      // catch, and every proxy read 404'd (uploads worked; reads never did).
       const res = await blobApi.get(pathname, { access: "private" });
-      if (!res) continue;
-      const bytes = await res.arrayBuffer();
+      if (!res || res.statusCode !== 200 || !res.stream) continue;
+      const bytes = await streamToBuffer(res.stream);
       return {
         bytes,
-        contentType: meta.contentType || contentTypeForExt(ext),
-        etag: meta.etag || `"${pathname}-${meta.size ?? bytes.byteLength}"`,
+        contentType: res.blob.contentType || meta.contentType || contentTypeForExt(ext),
+        etag: meta.etag || res.blob.etag || `"${pathname}-${res.blob.size ?? bytes.byteLength}"`,
         pathname,
       };
     } catch {
