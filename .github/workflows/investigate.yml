@@ -105,7 +105,7 @@ jobs:
               if (bal < 2000000000000000000n) { console.log("::error::deployer needs >= 2 STT gas"); process.exit(1); }
             });'
       - name: Deploy V30 (side support + hardened settle) + on-chain smoke
-        run: set -o pipefail; node script/deploy-v30.mjs 2>&1 | tee deploy-v30.log
+        run: set -o pipefail; FACTORY_ADDRESS=0xea5f3130a5ed09929da3e156ec0308c58de6a2e1 node script/deploy-v30.mjs 2>&1 | tee deploy-v30.log
       - name: Redact smoke log (strip tx hashes + private details)
         run: sed -E 's/0x[0-9a-f]{64}/<txhash>/g' deploy-v30.log > deploy-v30.redacted.log && mv deploy-v30.redacted.log deploy-v30.log
       - name: Commit deploy log via Contents API

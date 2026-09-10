@@ -86,41 +86,43 @@ const constructorArgs = [FEE_RECIPIENT, 250n, 100000000000000000n, 1000000000000
 const balance = await publicClient.getBalance({ address: account.address });
 console.log("deployer balance:", formatEther(balance), "STT");
 
-const data = encodeDeployData({ abi, bytecode, args: constructorArgs });
-// Constructor deploys the Wager implementation inline — needs a big budget.
-// Estimate first (also surfaces constructor revert reasons), then pad.
-let gas = 60_000_000n;
-try {
-  const est = await publicClient.estimateGas({ account, data });
-  console.log("estimated deploy gas:", est);
-  gas = est * 3n > 80_000_000n ? 80_000_000n : est * 3n;
-} catch (e) {
-  console.log("estimate failed (continuing with 60M):", String(e).slice(0, 500));
-}
-const txHash = await walletClient.sendTransaction({
-  data,
-  gas,
-  gasPrice: 20_000_000_000n, // 20 gwei legacy — Somnia base is ~5.3 gwei
-});
-console.log("deploy tx:", txHash);
+let factoryAddress = process.env.FACTORY_ADDRESS || "";
+if (factoryAddress) {
+  console.log("using existing factory:", factoryAddress);
+} else {
+  const data = encodeDeployData({ abi, bytecode, args: constructorArgs });
+  // Constructor deploys the Wager implementation inline — needs a big budget
+  // (Somnia metered the real deployment at ~36.6M gas).
+  let gas = 120_000_000n;
+  try {
+    const est = await publicClient.estimateGas({ account, data });
+    console.log("estimated deploy gas:", est);
+    gas = est * 3n > 120_000_000n ? 120_000_000n : est * 3n;
+  } catch (e) {
+    console.log("estimate failed (continuing with 120M):", String(e).slice(0, 500));
+  }
+  const txHash = await walletClient.sendTransaction({
+    data,
+    gas,
+    gasPrice: 20_000_000_000n, // 20 gwei legacy — Somnia base is ~5.3 gwei
+  });
+  console.log("deploy tx:", txHash);
 
-const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 120_000 });
-console.log("status:", receipt.status, "block:", receipt.blockNumber, "gasUsed:", receipt.gasUsed);
-if (receipt.status !== "success") throw new Error("deploy reverted on-chain");
-const factoryAddress = receipt.contractAddress;
-console.log("FACTORY_ADDRESS=" + factoryAddress);
+  const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 120_000 });
+  console.log("status:", receipt.status, "block:", receipt.blockNumber, "gasUsed:", receipt.gasUsed);
+  if (receipt.status !== "success") throw new Error("deploy reverted on-chain");
+  factoryAddress = receipt.contractAddress;
+  console.log("FACTORY_ADDRESS=" + factoryAddress);
+}
 
 // ── On-chain verification ─────────────────────────────────────
-const factoryReads = await publicClient.multicall({
-  contracts: [
-    { address: factoryAddress, abi, functionName: "implementation" },
-    { address: factoryAddress, abi, functionName: "feeRecipient" },
-    { address: factoryAddress, abi, functionName: "defaultFeeBps" },
-    { address: factoryAddress, abi, functionName: "minStake" },
-    { address: factoryAddress, abi, functionName: "maxStake" },
-  ],
-});
-const [implementation, feeRecipient, feeBps, minStake, maxStake] = factoryReads.map((r) => r.result);
+const [implementation, feeRecipient, feeBps, minStake, maxStake] = await Promise.all([
+  publicClient.readContract({ address: factoryAddress, abi, functionName: "implementation" }),
+  publicClient.readContract({ address: factoryAddress, abi, functionName: "feeRecipient" }),
+  publicClient.readContract({ address: factoryAddress, abi, functionName: "defaultFeeBps" }),
+  publicClient.readContract({ address: factoryAddress, abi, functionName: "minStake" }),
+  publicClient.readContract({ address: factoryAddress, abi, functionName: "maxStake" }),
+]);
 console.log({
   implementation,
   feeRecipient,
