@@ -62,7 +62,12 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   }, [actions.joinStep, duel.refetch]);
 
   // Determine effective market resolution (market or pool fallback)
-  const effectiveIsResolved = (market.isResolved ?? false) || (poolMarket.isResolved ?? false);
+  // Also use payoutNumerators as a secondary indicator — if payouts exist, market is resolved
+  const marketHasPayouts = !!(market.payoutNumerators && market.payoutNumerators.length >= 2 &&
+    (Number(market.payoutNumerators[0]) > 0 || Number(market.payoutNumerators[1]) > 0));
+  const poolHasPayouts = !!(poolMarket.payoutNumerators && poolMarket.payoutNumerators.length >= 2 &&
+    (Number(poolMarket.payoutNumerators[0]) > 0 || Number(poolMarket.payoutNumerators[1]) > 0));
+  const effectiveIsResolved = (market.isResolved ?? false) || (poolMarket.isResolved ?? false) || marketHasPayouts || poolHasPayouts;
   // Use whichever market resolved for payout check
   const effectivePayouts = market.payoutNumerators ?? poolMarket.payoutNumerators;
 

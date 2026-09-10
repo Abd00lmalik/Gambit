@@ -13,6 +13,7 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadedAt, setUploadedAt] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -44,9 +45,12 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
         return;
       }
 
-      onUploaded?.(data.pfpUrl);
-      // Clear preview so the component uses the proxy endpoint for display
+      // Upload succeeded — set timestamp to cache-bust the proxy URL
+      // This ensures the browser fetches the new image, not the cached old one
+      setUploadedAt(Date.now());
+      // Clear preview AFTER setting timestamp, so the proxy URL takes over immediately
       setPreview(null);
+      onUploaded?.(data.pfpUrl);
     } catch (e) {
       setError("Upload failed. Try again.");
     } finally {
@@ -55,8 +59,11 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
   };
 
   // During upload: show local data URL preview (immediate feedback)
-  // After upload / idle: use server proxy endpoint (private blob URLs aren't accessible from client)
-  const displayUrl = preview || (currentPfp && address ? `/api/pfp/${address.toLowerCase()}` : null);
+  // After upload: use server proxy with cache-busting timestamp
+  // Before upload: use stored pfp_url via proxy endpoint
+  const displayUrl = preview
+    || (uploadedAt > 0 && address ? `/api/pfp/${address.toLowerCase()}?t=${uploadedAt}` : null)
+    || (currentPfp && address ? `/api/pfp/${address.toLowerCase()}` : null);
 
   return (
     <div className="relative group">

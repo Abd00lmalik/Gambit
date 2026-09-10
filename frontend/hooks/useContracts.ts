@@ -354,11 +354,13 @@ export function useMarketStatus(marketAddress: Address | undefined) {
     query: { enabled: !!marketAddress, refetchInterval: 10000 },
   });
 
+  // Always query payoutNumerators when address is available — don't gate on isResolved
+  // This avoids the race where isResolved reverts (no code) and payoutNumerators never queries
   const payoutNumerators = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "payoutNumerators",
-    query: { enabled: !!marketAddress && isResolved.data === true },
+    query: { enabled: !!marketAddress, refetchInterval: 10000 },
   });
 
   return {
