@@ -51,7 +51,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   // The old code only tried the module re-derivation, so any mismatch between
   // what the frontend guessed and what the contract stored silently pinned the
   // page to "Waiting for DreamDEX market to resolve…" forever.
-  const resolution = useDuelResolution(duelAddress, duel.marketId);
+  const resolution = useDuelResolution(duelAddress, duel.marketId, marketData?.expiry);
   // Terminal = market resolved OR voided (either unlocks a contract action).
   const effectiveIsResolved = resolution.isTerminal;
   const isVoided = resolution.isVoided;
@@ -411,8 +411,9 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </div>
           )}
 
-          {/* Market voided — both stakes refund (contract's refund() path) */}
-          {hasJoined && state === DuelState.LOCKED && isVoided && (
+          {/* Market voided (refund()) OR settled as a tie (settle() refunds
+              both when p[0]==p[1]) — both stakes come back. */}
+          {hasJoined && state === DuelState.LOCKED && (isVoided || winnerSide === "tie") && (
             <button
               disabled={actions.isPending || isChecking}
               onClick={async () => {
@@ -421,7 +422,8 @@ export default function DuelPage({ params }: { params: { id: string } }) {
                     await ensureCorrectNetwork();
                     return;
                   }
-                  await actions.refundDuel();
+                  if (isVoided) await actions.refundDuel();
+                  else await actions.settleDuel(); // contract auto-refunds on p0==p1
                 } catch {}
               }}
               className="min-h-[52px] w-full rounded-xl bg-yellow-400 py-3 font-display text-base font-bold text-carbon transition-all hover:bg-yellow-400/80 active:scale-[0.97] disabled:opacity-70"
@@ -431,7 +433,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           )}
 
           {/* Market resolved but not the winner or can't determine winner — show settle for anyone (permissionless) */}
-          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isVoided && !isWinner && (
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isVoided && winnerSide !== "tie" && !isWinner && (
             <button
               disabled={actions.isPending || isChecking}
               onClick={async () => {
@@ -591,9 +593,13 @@ export default function DuelPage({ params }: { params: { id: string } }) {
               <p className="font-body text-sm text-yellow-400">
                 {resolution.candidates.length === 0
                   ? "Locating market contract on-chain…"
-                  : resolution.anyCandidateAlive
-                    ? "Waiting for DreamDEX market to resolve…"
-                    : "Market contract unreachable — no readable address found for this market yet."}
+                  : resolution.claimsResolvedPrematurely
+                    ? "A market contract reported resolution BEFORE this duel's countdown ended — ignoring it per the settlement rule. Resolution is checked the moment the countdown hits zero."
+                    : resolution.resolvedPayoutsPending
+                    ? "Market reports resolved; waiting for the settlement payout vector…"
+                    : resolution.anyCandidateAlive
+                      ? "Waiting for DreamDEX market to resolve…"
+                      : "Market contract unreachable — no readable address found for this market yet."}
               </p>
               {process.env.NODE_ENV !== "production" && (
                 <p className="font-mono text-[10px] text-gray-500 mt-2">

@@ -313,13 +313,16 @@ export function useFactoryReads() {
  * BinaryMarketsModule record, plus the raw record for diagnostics.
  * Polls every 10s so a page left open notices resolution without refresh.
  */
-export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
+export function useResolvedMarketAddress(
+  marketId: `0x${string}` | undefined,
+  refetchMs = 10_000,
+) {
   const record = useReadContract({
     address: BINARY_MARKETS_MODULE_ADDRESS,
     abi: BINARY_MARKETS_MODULE_ABI,
     functionName: "markets",
     args: marketId ? [marketId] : undefined,
-    query: { enabled: !!marketId, refetchInterval: 10_000 },
+    query: { enabled: !!marketId, refetchInterval: refetchMs },
   });
 
   const resolved = record.data as readonly unknown[] | undefined;
@@ -337,26 +340,26 @@ export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
   };
 }
 
-export function useMarketStatus(marketAddress: Address | undefined) {
+export function useMarketStatus(marketAddress: Address | undefined, refetchMs = 10_000) {
   const status = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "status",
-    query: { enabled: !!marketAddress, refetchInterval: 10_000 },
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
 
   const isResolved = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "isResolved",
-    query: { enabled: !!marketAddress, refetchInterval: 10_000 },
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
 
   const isVoided = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "isVoided",
-    query: { enabled: !!marketAddress, refetchInterval: 10_000 },
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
 
   // Always query payoutNumerators when address is available — don't gate on isResolved.
@@ -366,7 +369,7 @@ export function useMarketStatus(marketAddress: Address | undefined) {
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "payoutNumerators",
-    query: { enabled: !!marketAddress, refetchInterval: 10_000 },
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
 
   // "Alive" means the address actually speaks the market interface: at least one
@@ -406,15 +409,34 @@ export function useMarketStatus(marketAddress: Address | undefined) {
 export function useDuelResolution(
   duelAddress: Address | undefined,
   marketId: `0x${string}` | undefined,
+  /** Market expiry (unix secs) from DreamDEX. Terminality is only ACCEPTED at
+   *  or after this instant — the settlement rule: gambit waits for the
+   *  countdown to hit zero, then immediately reads the market's resolution
+   *  from DreamDEX and declares the winner. Before expiry, nothing counts —
+   *  even if some candidate contract answers isResolved()==true (the wager
+   *  stores its market address at initialize(), so garbage answers can arrive
+   *  the moment player B joins). */
+  expirySec?: number,
 ) {
+  // Coarse clock so the expiry gate re-evaluates without a manual refresh.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 2000);
+    return () => clearInterval(id);
+  }, []);
+  const nearOrPastExpiry = expirySec ? nowSec >= expirySec - 300 : true;
+  const pollMs = nearOrPastExpiry ? 3_000 : 10_000;
+  // 5s of grace for clock skew between our box and the chain.
+  const terminalWindowOpen = !expirySec || nowSec >= expirySec - 5;
+
   const stored = useReadContract({
     address: duelAddress,
     abi: WAGER_ABI,
     functionName: "resolvedMarketContract",
-    query: { enabled: !!duelAddress, refetchInterval: 10_000 },
+    query: { enabled: !!duelAddress, refetchInterval: pollMs },
   });
   const { resolvedMarketAddress: moduleMarket, poolAddress: modulePool, error: moduleError } =
-    useResolvedMarketAddress(marketId);
+    useResolvedMarketAddress(marketId, pollMs);
 
   const isUsable = (a: unknown): a is Address =>
     typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a) &&
@@ -436,9 +458,9 @@ export function useDuelResolution(
   }
 
   // Fixed hook slots (hooks can't be called in a loop).
-  const s0 = useMarketStatus(candidates[0]?.addr);
-  const s1 = useMarketStatus(candidates[1]?.addr);
-  const s2 = useMarketStatus(candidates[2]?.addr);
+  const s0 = useMarketStatus(candidates[0]?.addr, pollMs);
+  const s1 = useMarketStatus(candidates[1]?.addr, pollMs);
+  const s2 = useMarketStatus(candidates[2]?.addr, pollMs);
   const statuses = [s0, s1, s2].slice(0, candidates.length);
 
   // The EFFECTIVE market is the first candidate that speaks the market
@@ -457,8 +479,23 @@ export function useDuelResolution(
   }
 
   const marketResolved = effectiveStatus?.isResolved === true;
-  const isVoided = effectiveStatus?.isVoided === true;
-  const isTerminal = marketResolved || isVoided;
+  const marketVoided = effectiveStatus?.isVoided === true;
+  // Second layer of defense: a winner needs more than the market's bool —
+  // an actual finalized payout vector (oracle sets p[0]/p[1] at settlement).
+  // Some market builds report isResolved() from the payout DENOMINATOR, which
+  // can be non-zero during trading; requiring decided numerators makes the
+  // declaration safe against that too.
+  const payoutsRaw = effectiveStatus?.payoutNumerators;
+  const hasDecidedPayouts =
+    !!payoutsRaw && payoutsRaw.length >= 2 &&
+    ((payoutsRaw[0] ?? BigInt(0)) > BigInt(0) || (payoutsRaw[1] ?? BigInt(0)) > BigInt(0));
+  // A contract answering resolved BEFORE the market's expiry is ignored — the
+  // duel settles on DreamDEX's resolution at the deadline, nothing else.
+  const isVoided = marketVoided && terminalWindowOpen;
+  const isTerminal = ((marketResolved && hasDecidedPayouts) || marketVoided) && terminalWindowOpen;
+  // Diagnostic: true when a candidate claimed terminal but we suppressed it
+  // because the duel countdown hasn't finished (proves the gate is holding).
+  const claimsResolvedPrematurely = (marketResolved || marketVoided) && !terminalWindowOpen;
 
   // Winner per the contract's own line in settle(): after requiring
   // market.isResolved() and !isVoided(), payouts equal → refund (tie),
@@ -472,9 +509,15 @@ export function useDuelResolution(
   }
 
   return {
-    // terminal = the market itself reached a final state (resolved OR voided).
+    // terminal = market reached a final state AND the duel's countdown has
+    // actually finished (the settlement rule).
     isTerminal,
-    isResolved: marketResolved && !isVoided,
+    terminalWindowOpen,
+    claimsResolvedPrematurely,
+    // isResolved() answered true but the payout vector isn't finalized yet —
+    // we keep waiting instead of declaring. (Dev-visible diagnostic.)
+    resolvedPayoutsPending: marketResolved && !hasDecidedPayouts && terminalWindowOpen,
+    isResolved: marketResolved && hasDecidedPayouts && !marketVoided && terminalWindowOpen,
     isVoided,
     winnerSide,
     payoutNumerators: payouts,

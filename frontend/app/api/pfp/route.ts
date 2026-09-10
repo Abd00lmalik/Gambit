@@ -46,12 +46,31 @@ export async function POST(req: NextRequest) {
 
     console.log(`PFP upload: ${addr}, type=${file.type}, size=${file.size}, path=${pathname}`);
 
-    const blob = await put(pathname, file, {
-      access: "public",
-      contentType: file.type,
-      addRandomSuffix: false,
-      allowOverwrite: true,
-    });
+    // The project's blob store is configured PRIVATE — asking for "public"
+    // throws "Cannot use public access on a private store". Private is fine:
+    // the GET proxy signs a download URL server-side via getDownloadUrl().
+    // If the store is ever flipped to public, the retry below keeps uploads
+    // working without a code change.
+    let blob: Awaited<ReturnType<typeof put>>;
+    try {
+      blob = await put(pathname, file, {
+        access: "private",
+        contentType: file.type,
+        addRandomSuffix: false,
+        allowOverwrite: true,
+      });
+    } catch (e: any) {
+      if (String(e?.message).includes("private")) {
+        blob = await put(pathname, file, {
+          access: "public",
+          contentType: file.type,
+          addRandomSuffix: false,
+          allowOverwrite: true,
+        });
+      } else {
+        throw e;
+      }
+    }
 
     console.log(`PFP blob stored: ${blob.url}`);
 
@@ -66,7 +85,11 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const saved = await updateProfilePfp(addr, blob.url);
+    // Store the PROXY path (not the raw blob URL) as pfp_url: on a private
+    // store the raw URL 403s for every browser-side consumer, while the proxy
+    // resolves the exact blob server-side via getDownloadUrl(). getPfpBlobPath
+    // falls through to the deterministic pfps/<addr>.* probe for these rows.
+    const saved = await updateProfilePfp(addr, `/api/pfp/${addr}`);
     if (!saved) {
       console.error("PFP upload: DB save failed for", addr);
       return NextResponse.json(
@@ -103,10 +126,10 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      pfpUrl: blob.url,
+      pfpUrl: `/api/pfp/${addr}`,
       path: pathname,
       proxyUrl: `/api/pfp/${addr}`,
-      verified: true, // proxy is guaranteed to serve: same DB path, same fetch
+      verified: true, // proxy read-back verified against this exact blob
     });
   } catch (e: any) {
     console.error("PFP upload error:", e);
