@@ -1,14 +1,34 @@
 compiled GambitFactory: 11249 bytes of creation code
 deployer: 0x0022EC010030158cC27B283BA640706eDBa6080f
-deployer balance: 45.469692902 STT
-deploy tx: 0x2afda38d77a7f0af460c1149b1663a68c06c2a2cc71b1b14b891a820bb77d8e1
-status: reverted block: 484738528n gasUsed: 9895570n
-file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:100
-if (receipt.status !== "success") throw new Error("deploy reverted on-chain");
-                                        ^
+deployer balance: 45.410319482 STT
+estimated deploy gas: 54914250n
+deploy tx: 0x0100ffb9ab4a78bad16861d3477f3e97fcc810059f2cf0a730085d5b37197079
+status: success block: 484741715n gasUsed: 36609500n
+FACTORY_ADDRESS=0xea5f3130a5ed09929da3e156ec0308c58de6a2e1
+file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/utils/chain/getChainContractAddress.js:5
+        throw new ChainDoesNotSupportContract({
+              ^
 
-Error: deploy reverted on-chain
-    at file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:100:41
-    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+ChainDoesNotSupportContract: Chain "Somnia Testnet" does not support contract "multicall3".
+
+This could be due to any of the following:
+- The chain does not have the contract "multicall3" configured.
+
+Version: viem@2.56.3
+    at getChainContractAddress (file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/utils/chain/getChainContractAddress.js:5:15)
+    at file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/actions/public/multicall.js:65:20
+    at multicall (file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/actions/public/multicall.js:72:7)
+    at Object.multicall (file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/clients/decorators/public.js:104:30)
+    at file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:114:41
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
+  details: undefined,
+  docsPath: undefined,
+  metaMessages: [
+    'This could be due to any of the following:',
+    '- The chain does not have the contract "multicall3" configured.'
+  ],
+  shortMessage: 'Chain "Somnia Testnet" does not support contract "multicall3".',
+  version: '2.56.3'
+}
 
 Node.js v22.23.2
