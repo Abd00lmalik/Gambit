@@ -110,7 +110,9 @@ jobs:
             --rpc-url $RPC \
             --private-key $DEPLOYER_PK \
             --broadcast \
-            --gas-estimate-multiplier 130 \
+            --legacy \
+            --with-gas-price 60000000000 \
+            --gas-estimate-multiplier 200 \
             -vvv 2>&1 | tee deploy-v30.log
       - name: Commit deploy log via Contents API
         if: always()
