@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAccount } from "wagmi";
 
 interface PfpUploadProps {
@@ -8,62 +8,130 @@ interface PfpUploadProps {
   onUploaded?: (url: string) => void;
 }
 
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1500;
+
 export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
   const { address } = useAccount();
   const [isUploading, setIsUploading] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [uploadedAt, setUploadedAt] = useState(0);
+  // Proxy URL we are waiting to confirm; null once it has loaded.
+  const [pendingProxyUrl, setPendingProxyUrl] = useState<string | null>(null);
+  // Once the proxy serves our upload, keep rendering that URL even if the
+  // parent's profile refetch hasn't caught up yet (no flicker window).
+  const [verifiedUrl, setVerifiedUrl] = useState<string | null>(null);
+  const [initialFailed, setInitialFailed] = useState(false);
+  const attemptRef = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const addrLower = address?.toLowerCase();
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  // If the parent hands us a freshly-fetched pfp_url, allow another shot at it.
+  useEffect(() => {
+    setInitialFailed(false);
+  }, [currentPfp, addrLower]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !address) return;
 
-    // Preview
+    // Local preview — shown immediately and KEPT until the server proxy
+    // confirms it can serve the new image (no more blank/placeholder flicker).
     const reader = new FileReader();
     reader.onload = (ev) => setPreview(ev.target?.result as string);
     reader.readAsDataURL(file);
 
     setIsUploading(true);
     setError(null);
+    attemptRef.current = 0;
 
     try {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("address", address);
 
-      const res = await fetch("/api/pfp", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await res.json();
+      const res = await fetch("/api/pfp", { method: "POST", body: formData });
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setError(data.error || "Upload failed");
+        const detail = data?.detail ? ` (${JSON.stringify(data.detail)})` : "";
+        setError(`${data?.error || "Upload failed"}${detail}`);
         return;
       }
 
-      // Upload succeeded — set timestamp to cache-bust the proxy URL
-      // This ensures the browser fetches the new image, not the cached old one
-      setUploadedAt(Date.now());
-      // Clear preview AFTER setting timestamp, so the proxy URL takes over immediately
-      setPreview(null);
+      if (data?.verified && data?.proxyUrl) {
+        // The POST only returns 200 after blob write + DB save + a real
+        // readback through the same path the proxy serves from. The image is
+        // provably live — switch to it immediately, no flicker window.
+        setVerifiedUrl(`${data.proxyUrl}?t=${Date.now()}`);
+        setPendingProxyUrl(null);
+        setPreview(null);
+        setError(null);
+      } else {
+        // Older/unverified response path: keep the preview until the proxy
+        // URL itself decodes (retry loop below).
+        setPendingProxyUrl(`/api/pfp/${addrLower}?t=${Date.now()}`);
+      }
       onUploaded?.(data.pfpUrl);
-    } catch (e) {
+    } catch {
       setError("Upload failed. Try again.");
     } finally {
       setIsUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
   };
 
-  // During upload: show local data URL preview (immediate feedback)
-  // After upload: use server proxy with cache-busting timestamp
-  // Before upload: use stored pfp_url via proxy endpoint
-  const displayUrl = preview
-    || (uploadedAt > 0 && address ? `/api/pfp/${address.toLowerCase()}?t=${uploadedAt}` : null)
-    || (currentPfp && address ? `/api/pfp/${address.toLowerCase()}` : null);
+  // Verification loop: preload the pending proxy URL in a detached Image.
+  // Only when it decodes successfully do we hand rendering over to it.
+  useEffect(() => {
+    if (!pendingProxyUrl) return;
+    let cancelled = false;
+
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      setVerifiedUrl(pendingProxyUrl);
+      setPendingProxyUrl(null);
+      setPreview(null);
+      setError(null);
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      if (attemptRef.current < MAX_RETRIES) {
+        attemptRef.current += 1;
+        timerRef.current = setTimeout(() => {
+          if (!cancelled && addrLower) {
+            setPendingProxyUrl(`/api/pfp/${addrLower}?t=${Date.now()}`);
+          }
+        }, RETRY_DELAY_MS);
+      } else {
+        // Proxy still failing after retries: the image IS saved (upload + DB
+        // both returned success) — keep the local preview for this session so
+        // the user sees their new PFP, and tell them the server view lags.
+        setError("Saved, but the image endpoint can't serve it yet — open /api/pfp/" + addrLower + " to see why.");
+      }
+    };
+    img.src = pendingProxyUrl;
+
+    return () => {
+      cancelled = true;
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [pendingProxyUrl, addrLower]);
+
+  // Pre-upload: show the stored PFP via the proxy when the parent says one exists.
+  const initialSrc =
+    !preview && !pendingProxyUrl && !verifiedUrl && currentPfp && addrLower
+      ? `/api/pfp/${addrLower}`
+      : null;
+  const displayUrl = pendingProxyUrl || preview || verifiedUrl || (!initialFailed ? initialSrc : null);
 
   return (
     <div className="relative group">
@@ -84,11 +152,17 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
             src={displayUrl}
             alt="Profile"
             className="h-20 w-20 rounded-full object-cover border-2 border-teal/30"
+            onError={() => {
+              // Only the initial stored-pfp load can hit this now (upload
+              // previews are data URLs). Treat a 404 as "no pfp yet" rather
+              // than showing a broken image.
+              if (!preview && !pendingProxyUrl) setInitialFailed(true);
+            }}
           />
         ) : (
           <div className="h-20 w-20 rounded-full bg-teal/15 border-2 border-teal/30 flex items-center justify-center">
             <span className="font-display text-2xl font-bold text-teal">
-              {address?.charAt(2).toUpperCase() || "?"}
+              {addrLower?.charAt(2).toUpperCase() || "?"}
             </span>
           </div>
         )}

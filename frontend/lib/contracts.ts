@@ -188,6 +188,18 @@ export const WAGER_ABI = [
     stateMutability: "view",
   },
   {
+    // Canonical Market contract resolved & stored by the Wager itself at
+    // initialize() (BinaryMarketsModule.markets(marketId)[8], with pool [9]
+    // fallback when [8] had no code). settle() reads exactly THIS address, so
+    // the frontend must derive resolution the same way — not re-derive a
+    // possibly-different address from its own module call.
+    type: "function",
+    name: "resolvedMarketContract",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
+  },
+  {
     type: "function",
     name: "factoryCancel",
     inputs: [],
@@ -405,6 +417,20 @@ export const DREAMDEX_ABI = [
   },
   {
     type: "function",
+    name: "yesId",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "noId",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
     name: "status",
     inputs: [],
     outputs: [{ name: "", type: "uint8" }],
@@ -417,27 +443,26 @@ export const BINARY_MARKETS_MODULE_ABI = [
     type: "function",
     name: "markets",
     inputs: [{ name: "marketId", type: "bytes32" }],
+    // Flat output list mirrors @somnia-chain/markets-sdk binaryModuleReadAbi:
+    //   markets(bytes32) view returns (uint256 oracleQuestionId, uint8 outcomeSlotCount, uint8 voidPolicy,
+    //   address collateral, uint32 originOperatorId, bytes32 originVenueId, address oracleAdapter,
+    //   address creator, address market, address pool, uint256 yesId, uint256 noId, uint64 tradingStart, uint64 expiry)
+    // viem returns a flat array → [8]=market (IBinaryMarket), [9]=pool.
     outputs: [
-      {
-        name: "",
-        type: "tuple",
-        components: [
-          { name: "oracleQuestionId", type: "uint256" },
-          { name: "outcomeSlotCount", type: "uint8" },
-          { name: "voidPolicy", type: "uint8" },
-          { name: "collateral", type: "address" },
-          { name: "originOperatorId", type: "uint32" },
-          { name: "originVenueId", type: "bytes32" },
-          { name: "oracleAdapter", type: "address" },
-          { name: "creator", type: "address" },
-          { name: "market", type: "address" },
-          { name: "pool", type: "address" },
-          { name: "yesId", type: "uint256" },
-          { name: "noId", type: "uint256" },
-          { name: "tradingStart", type: "uint64" },
-          { name: "expiry", type: "uint64" },
-        ],
-      },
+      { name: "oracleQuestionId", type: "uint256" },
+      { name: "outcomeSlotCount", type: "uint8" },
+      { name: "voidPolicy", type: "uint8" },
+      { name: "collateral", type: "address" },
+      { name: "originOperatorId", type: "uint32" },
+      { name: "originVenueId", type: "bytes32" },
+      { name: "oracleAdapter", type: "address" },
+      { name: "creator", type: "address" },
+      { name: "market", type: "address" },
+      { name: "pool", type: "address" },
+      { name: "yesId", type: "uint256" },
+      { name: "noId", type: "uint256" },
+      { name: "tradingStart", type: "uint64" },
+      { name: "expiry", type: "uint64" },
     ],
     stateMutability: "view",
   },

@@ -106,11 +106,38 @@ export async function getOrCreateProfile(
   }
 }
 
+/**
+ * Read the EXACT blob pathname for a wallet's PFP from `pfp_url`
+ * (e.g. "pfps/0xabc….jpeg"), so the proxy never has to guess extensions.
+ * Returns null when no profile/blob is stored (or DB is unavailable).
+ */
+/**
+ * The raw stored `pfp_url` for a wallet: a FULL blob URL for rows written by
+ * the current upload route, a legacy "/api/pfp/<addr>" placeholder for interim
+ * rows, or null. Consumers decide how to interpret it.
+ */
+export async function getPfpBlobUrl(address: string): Promise<string | null> {
+  if (!supabase) return null;
+  const addr = address.toLowerCase();
+  try {
+    const { data } = await supabase
+      .from("wallet_profiles")
+      .select("pfp_url")
+      .eq("address", addr)
+      .limit(1)
+      .maybeSingle();
+    const url = (data as { pfp_url?: string | null } | null)?.pfp_url;
+    return url ?? null;
+  } catch (e) {
+    console.warn("getPfpBlobUrl failed:", e);
+    return null;
+  }
+}
+
 export async function updateProfilePfp(
   address: string,
   pfpUrl: string
-): Promise<boolean> {
-  if (!supabase) {
+): Promise<boolean> {  if (!supabase) {
     console.warn("updateProfilePfp: no supabase client");
     return false;
   }

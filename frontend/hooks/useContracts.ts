@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect, useRef } from "react";
 import {
+  useBlock,
   useAccount,
   useWriteContract,
   useWaitForTransactionReceipt,
@@ -309,64 +310,328 @@ export function useFactoryReads() {
 
 /**
  * Resolves the canonical Market contract address from a Wager's marketId.
- * Tries index 8 (market) first — if it has no code (Era 3), falls back to index 9 (pool).
+ * Returns BOTH the market (index 8) and pool (index 9) addresses from the
+ * BinaryMarketsModule record, plus the raw record for diagnostics.
+ * Polls every 10s so a page left open notices resolution without refresh.
  */
-export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
+export function useResolvedMarketAddress(
+  marketId: `0x${string}` | undefined,
+  refetchMs = 10_000,
+) {
   const record = useReadContract({
     address: BINARY_MARKETS_MODULE_ADDRESS,
     abi: BINARY_MARKETS_MODULE_ABI,
     functionName: "markets",
     args: marketId ? [marketId] : undefined,
-    query: { enabled: !!marketId },
+    query: { enabled: !!marketId, refetchInterval: refetchMs },
   });
 
-  const resolved = record.data as any;
-  const marketAddress = resolved?.[8] as Address | undefined;
-  const poolAddress = resolved?.[9] as Address | undefined;
+  const resolved = record.data as readonly unknown[] | undefined;
+  const isZeroAddr = (a: unknown): a is Address =>
+    typeof a === "string" && a !== "0x0000000000000000000000000000000000000000" && /^0x[0-9a-fA-F]{40}$/.test(a);
 
-  // For the hook consumer: prefer market address, but also expose pool as fallback
+  const marketAddress = isZeroAddr(resolved?.[8]) ? (resolved[8] as Address) : undefined;
+  const poolAddress = isZeroAddr(resolved?.[9]) ? (resolved[9] as Address) : undefined;
+
+  // YES/NO payout-slot derivation — the CRITICAL mapping. payoutNumerators() is
+  // indexed by OUTCOME SLOT, and on Somnia's testnet binary markets slot 0 is
+  // NO, slot 1 is YES (proven on-chain: duel 0x267AAFb3… resolved NO — BTC
+  // below strike at 08:45 — yet settle() paid playerA because the contract
+  // assumed payouts[0] == YES). The module record carries each market's own
+  // yesId/noId (uint256 ERC-6909 ids); the low 8 bits of the id ARE the payout
+  // slot (ids.js: id = (pool<<72)|(nonce<<8)|idx). Derive, never assume.
+  const slotOf = (v: unknown): 0 | 1 | null => {
+    try {
+      const bits = Number(BigInt(v as string | number | bigint) & BigInt(0xff));
+      return bits === 0 || bits === 1 ? (bits as 0 | 1) : null;
+    } catch {
+      return null;
+    }
+  };
+  const yesSlot = slotOf(resolved?.[10]);
+  const noSlot = slotOf(resolved?.[11]);
+
   return {
+    yesSlot,
+    noSlot,
     resolvedMarketAddress: marketAddress,
-    poolAddress: poolAddress,
+    poolAddress,
+    error: record.error ?? null,
     isLoading: record.isLoading,
   };
 }
 
-export function useMarketStatus(marketAddress: Address | undefined) {
+export function useMarketStatus(marketAddress: Address | undefined, refetchMs = 10_000) {
   const status = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "status",
-    query: { enabled: !!marketAddress, refetchInterval: 10000 },
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
 
   const isResolved = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "isResolved",
-    query: { enabled: !!marketAddress, refetchInterval: 10000 },
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
 
   const isVoided = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "isVoided",
-    query: { enabled: !!marketAddress, refetchInterval: 10000 },
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
 
-  // Always query payoutNumerators when address is available — don't gate on isResolved
-  // This avoids the race where isResolved reverts (no code) and payoutNumerators never queries
+  // Always query payoutNumerators when address is available — don't gate on isResolved.
+  // payoutNumerators is empty until resolved, so it doubles as a resolution signal for
+  // contracts where isResolved() itself reverts (selector missing).
   const payoutNumerators = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "payoutNumerators",
-    query: { enabled: !!marketAddress, refetchInterval: 10000 },
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
+
+  // The market's OWN outcome-token ids: the low byte of each is the payout
+  // slot that outcome occupies in payoutNumerators(). Read from the candidate
+  // itself so the winner mapping is derived from the exact contract whose
+  // vector we're reading — never from a global assumption.
+  const yesId = useReadContract({
+    address: marketAddress,
+    abi: DREAMDEX_ABI,
+    functionName: "yesId",
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
+  });
+  const noId = useReadContract({
+    address: marketAddress,
+    abi: DREAMDEX_ABI,
+    functionName: "noId",
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
+  });
+
+  // "Alive" means the address actually speaks the market interface: at least one
+  // of isResolved()/payoutNumerators() answered (true OR false). A contract that
+  // merely has some unrelated status() (e.g. a collateral pool) is NOT treated
+  // as a market — it must answer the exact functions Wager.settle() requires.
+  const alive =
+    !!marketAddress && (isResolved.data !== undefined || payoutNumerators.data !== undefined);
+
+  const slotOfId = (v: unknown): 0 | 1 | null => {
+    try {
+      const bits = Number(BigInt(v as string | number | bigint) & BigInt(0xff));
+      return bits === 0 || bits === 1 ? (bits as 0 | 1) : null;
+    } catch {
+      return null;
+    }
+  };
 
   return {
     status: status.data !== undefined ? Number(status.data) : undefined,
     isResolved: isResolved.data ?? false,
     isVoided: isVoided.data ?? false,
-    payoutNumerators: payoutNumerators.data as bigint[] | undefined,
+    payoutNumerators: payoutNumerators.data as readonly bigint[] | undefined,
+    yesSlot: slotOfId(yesId.data),
+    noSlot: slotOfId(noId.data),
+    readError: isResolved.error ?? payoutNumerators.error ?? null,
+    addressAlive: alive,
+  };
+}
+
+/**
+ * Full on-chain resolution for a duel, mirroring Wager.settle()'s OWN logic so
+ * the UI and the contract can never disagree:
+ *
+ *   1. `resolvedMarketContract()` — the canonical IBinaryMarket address the Wager
+ *      stored at initialize() (exactly what settle() reads first).
+ *   2. BinaryMarketsModule `markets(marketId)[8]` (market).
+ *   3. BinaryMarketsModule `markets(marketId)[9]` (pool fallback — the "Era 3"
+ *      path where index 8 had no code; matches Wager._resolveMarketContract).
+ *
+ * Only the FIRST candidate that actually answers `isResolved()`/`payoutNumerators()`
+ * is the effective market — same pick settle() makes (`stored`, else module market,
+ * else pool when the market slot had no code). A candidate reverting those reads
+ * is skipped. A non-zero payout vector is NOT treated as resolution: markets
+ * expose live payout vectors while trading (that heuristic is what declared a
+ * winner before the market ever resolved).
+ */
+export function useDuelResolution(
+  duelAddress: Address | undefined,
+  marketId: `0x${string}` | undefined,
+  /** Market expiry (unix secs) from DreamDEX. Terminality is only ACCEPTED at
+   *  or after this instant — the settlement rule: gambit waits for the
+   *  countdown to hit zero, then immediately reads the market's resolution
+   *  from DreamDEX and declares the winner. Before expiry, nothing counts —
+   *  even if some candidate contract answers isResolved()==true (the wager
+   *  stores its market address at initialize(), so garbage answers can arrive
+   *  the moment player B joins). */
+  expirySec?: number,
+) {
+  // Coarse clock so the expiry gate re-evaluates without a manual refresh.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 2000);
+    return () => clearInterval(id);
+  }, []);
+  // Prefer the CHAIN clock (block timestamp) over the browser clock — a user's
+  // skewed-forward clock must never open the settlement window early.
+  const chainBlock = useBlock({
+    watch: false,
+    query: { enabled: !!expirySec, refetchInterval: 4_000 },
+  });
+  const clockSec =
+    chainBlock.data?.timestamp !== undefined
+      ? Number(chainBlock.data.timestamp)
+      : expirySec
+        ? undefined // expiry known but chain clock not yet → HOLD, don't trust local clock
+        : nowSec;
+  const nearOrPastExpiry = expirySec && clockSec !== undefined ? clockSec >= expirySec - 300 : !!expirySec;
+  const pollMs = nearOrPastExpiry ? 3_000 : 10_000;
+  // Terminality requires (a) the market's expiry is KNOWN (never open the gate
+  // while the indexer row is still loading — that leak is what flashed a wrong
+  // "You Won" pre-resolution), (b) the CHAIN clock is past it (5s skew grace).
+  const terminalWindowOpen =
+    !!expirySec && clockSec !== undefined && clockSec >= expirySec - 5;
+
+  const stored = useReadContract({
+    address: duelAddress,
+    abi: WAGER_ABI,
+    functionName: "resolvedMarketContract",
+    query: { enabled: !!duelAddress, refetchInterval: pollMs },
+  });
+  const { resolvedMarketAddress: moduleMarket, poolAddress: modulePool, yesSlot: modYes, noSlot: modNo, error: moduleError } =
+    useResolvedMarketAddress(marketId, pollMs);
+  // Slot sources, in trust order: (1) the EFFECTIVE market contract's own
+  // yesId()/noId() — the very contract whose payout vector we read; (2) the
+  // module registry record. With neither, slotsKnown=false and NO winner may
+  // be declared: assuming [Yes@0] is precisely what paid the wrong side on
+  // Somnia testnet (these markets settle [No@0, Yes@1]).
+  const moduleSlotsKnown = modYes !== null && modNo !== null && modYes !== modNo;
+
+  const isUsable = (a: unknown): a is Address =>
+    typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a) &&
+    a !== "0x0000000000000000000000000000000000000000";
+
+  // De-dupe candidates (stored addr is usually identical to moduleMarket).
+  const storedAddr = isUsable(stored.data) ? (stored.data as Address) : undefined;
+  const seen = new Set<string>();
+  const candidates: { label: string; addr: Address }[] = [];
+  for (const c of [
+    { label: "wager.resolvedMarketContract", addr: storedAddr },
+    { label: "module.markets()[market]", addr: moduleMarket },
+    { label: "module.markets()[pool]", addr: modulePool },
+  ] as const) {
+    if (c.addr && isUsable(c.addr) && !seen.has(c.addr.toLowerCase())) {
+      seen.add(c.addr.toLowerCase());
+      candidates.push({ label: c.label, addr: c.addr });
+    }
+  }
+
+  // Fixed hook slots (hooks can't be called in a loop).
+  const s0 = useMarketStatus(candidates[0]?.addr, pollMs);
+  const s1 = useMarketStatus(candidates[1]?.addr, pollMs);
+  const s2 = useMarketStatus(candidates[2]?.addr, pollMs);
+  const statuses = [s0, s1, s2].slice(0, candidates.length);
+
+  // The EFFECTIVE market is the first candidate that speaks the market
+  // interface — exactly the pick Wager.settle() makes: stored address if it has
+  // code, else module markets()[8], else the [9] pool (Era-3 layout). Later
+  // candidates are never consulted once one answers; and "resolved" is ONLY
+  // what that market's own isResolved()/isVoided() say.
+  let effectiveStatus: null | (typeof statuses)[number] = null;
+  let effectiveLabel: string | null = null;
+  for (let i = 0; i < statuses.length; i++) {
+    if (statuses[i].addressAlive) {
+      effectiveStatus = statuses[i];
+      effectiveLabel = candidates[i].label;
+      break;
+    }
+  }
+
+  const marketResolved = effectiveStatus?.isResolved === true;
+  const marketVoided = effectiveStatus?.isVoided === true;
+  // Second layer of defense: a winner needs more than the market's bool —
+  // an actual finalized payout vector (oracle sets p[0]/p[1] at settlement).
+  // Some market builds report isResolved() from the payout DENOMINATOR, which
+  // can be non-zero during trading; requiring decided numerators makes the
+  // declaration safe against that too.
+  // A FINALIZED binary settlement pays exactly one side: [D,0] or [0,D]
+  // (void/tie = both equal, which settle() refunds). While a market is still
+  // OPEN it can expose a LIVE odds vector like [57…, 43…] — both sides non-zero
+  // and unequal. That must NEVER be able to declare a winner.
+  const payoutsRaw = effectiveStatus?.payoutNumerators;
+  const p0 = payoutsRaw?.[0] ?? BigInt(0);
+  const p1 = payoutsRaw?.[1] ?? BigInt(0);
+  // payouts[yesSlot] pays the YES/Up side (playerA), payouts[noSlot] the
+  // NO/Down side (playerB) — slots taken from the market itself.
+  const effYes = effectiveStatus?.yesSlot ?? null;
+  const effNo = effectiveStatus?.noSlot ?? null;
+  const slotsKnown =
+    (effYes !== null && effNo !== null && effYes !== effNo) || moduleSlotsKnown;
+  const yesSlot = effYes ?? (moduleSlotsKnown ? (modYes as 0 | 1) : 0);
+  const noSlot = effNo ?? (moduleSlotsKnown ? (modNo as 0 | 1) : 1);
+  const arr = payoutsRaw ?? [];
+  const pYes = (arr[yesSlot] ?? BigInt(0)) as bigint;
+  const pNo = (arr[noSlot] ?? BigInt(0)) as bigint;
+  const hasFinalizedPayouts =
+    !!payoutsRaw && payoutsRaw.length >= 2 &&
+    ((pYes > BigInt(0) && pNo === BigInt(0)) ||
+      (pNo > BigInt(0) && pYes === BigInt(0)) ||
+      (pYes > BigInt(0) && pYes === pNo));
+  // Both sides live & unequal → the market is quoting, not settling.
+  const ambiguousPayoutVector =
+    !!payoutsRaw && payoutsRaw.length >= 2 &&
+    pYes > BigInt(0) && pNo > BigInt(0) && pYes !== pNo;
+  // A contract answering resolved BEFORE the market's expiry is ignored — the
+  // duel settles on DreamDEX's resolution at the deadline, nothing else.
+  const isVoided = marketVoided && terminalWindowOpen;
+  const isTerminal =
+    ((marketResolved && hasFinalizedPayouts && !ambiguousPayoutVector && slotsKnown) || marketVoided) &&
+    terminalWindowOpen;
+  // Diagnostic: true when a candidate claimed terminal but we suppressed it
+  // because the duel countdown hasn't finished (proves the gate is holding).
+  const claimsResolvedPrematurely = (marketResolved || marketVoided) && !terminalWindowOpen;
+
+  // Winner per the contract's own line in settle(): after requiring
+  // market.isResolved() and !isVoided(), payouts equal → refund (tie),
+  // p[0] > 0 → player A (creator/up), else player B (joiner/down).
+  let winnerSide: "up" | "down" | "tie" | null = null;
+  const payouts = isTerminal ? effectiveStatus?.payoutNumerators : undefined;
+  if (isTerminal && !isVoided && payouts && payouts.length >= 2) {
+    if (pYes > BigInt(0) || pNo > BigInt(0)) winnerSide = pYes === pNo ? "tie" : pYes > pNo ? "up" : "down";
+  }
+  // What the DEPLOYED contract will do (its hardcoded payouts[0] == YES rule).
+  // When this disagrees with winnerSide, settle() pays the wrong player —
+  // surfaced on the duel page as a funds-safety warning instead of a silent lie.
+  let contractWinnerSide: "up" | "down" | "tie" | null = null;
+  if (isTerminal && !isVoided && payouts && payouts.length >= 2) {
+    if (p0 > BigInt(0) || p1 > BigInt(0)) contractWinnerSide = p0 === p1 ? "tie" : p0 > BigInt(0) ? "up" : "down";
+  }
+
+  return {
+    // terminal = market reached a final state AND the duel's countdown has
+    // actually finished (the settlement rule).
+    isTerminal,
+    terminalWindowOpen,
+    slotsKnown,
+    contractWinnerSide,
+    claimsResolvedPrematurely,
+    // isResolved() answered true but the payout vector isn't finalized yet —
+    // we keep waiting instead of declaring. (Dev-visible diagnostic.)
+    resolvedPayoutsPending: marketResolved && !hasFinalizedPayouts && terminalWindowOpen,
+    // Live-odds payout vector (both sides non-zero, unequal) → market is
+    // quoting, NOT settling. Exposed so the UI can say so explicitly.
+    ambiguousPayoutVector,
+    isResolved: marketResolved && hasFinalizedPayouts && !ambiguousPayoutVector && !marketVoided && terminalWindowOpen,
+    isVoided,
+    winnerSide,
+    payoutNumerators: payouts,
+    candidates,
+    // Which candidate is the effective market (null = none alive yet). Surfaced for debugging.
+    resolvedVia: effectiveLabel,
+    effectiveMarketAddress: effectiveStatus ? candidates.find((c) => c.label === effectiveLabel)?.addr : undefined,
+    moduleError: moduleError ?? null,
+    storedReadError: stored.error ?? null,
+    anyCandidateAlive: statuses.some((s) => s.addressAlive),
   };
 }
