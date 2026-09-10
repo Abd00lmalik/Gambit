@@ -1,5 +1,5 @@
 Compiling 37 files with Solc 0.8.28
-Solc 0.8.28 finished in 1.83s
+Solc 0.8.28 finished in 2.58s
 Compiler run successful with warnings:
 Warning (2072): Unused local variable.
    --> test/ParimutuelPool.t.sol:160:9:
@@ -32,7 +32,27 @@ Ran 5 tests for test/WagerPrematureSettlement.t.sol:WagerPrematureSettlementTest
 [PASS] test_settle_revertsWhileMarketStillTrading() (gas: 877340)
 [PASS] test_settle_succeedsAfterExpiryWithRealPayouts() (gas: 1041161)
 [PASS] test_settle_zeroExpirySkipsGuard() (gas: 932588)
-Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 2.24ms (1.48ms CPU time)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 3.73ms (2.55ms CPU time)
+
+Ran 17 tests for test/ParimutuelPool.t.sol:ParimutuelPoolTest
+[PASS] test_claimRefund() (gas: 349523)
+[PASS] test_claim_downWins() (gas: 482601)
+[PASS] test_claim_proportionalPayout() (gas: 482603)
+[PASS] test_claim_upWins() (gas: 482840)
+[PASS] test_depositDown() (gas: 132433)
+[PASS] test_depositUp() (gas: 142474)
+[PASS] test_emptyPoolSplit() (gas: 10517)
+[PASS] test_multipleDeposits() (gas: 302277)
+[PASS] test_multipleUpDeposits() (gas: 275111)
+[PASS] test_poolSplit() (gas: 212900)
+[PASS] test_refund_voidedMarket() (gas: 322703)
+[PASS] test_resolve_upWins() (gas: 373311)
+[PASS] test_revertsIfAlreadyClaimed() (gas: 511870)
+[PASS] test_revertsIfDeadlinePassed() (gas: 46815)
+[PASS] test_revertsIfNoDepositOnWinningSide() (gas: 410499)
+[PASS] test_revertsIfNotResolved() (gas: 141677)
+[PASS] test_revertsIfZeroDeposit() (gas: 39530)
+Suite result: ok. 17 passed; 0 failed; 0 skipped; finished in 6.52ms (3.64ms CPU time)
 
 Ran 35 tests for test/Wager.t.sol:GambitTest
 [PASS] test_cancel_revertsBeforeDeadline() (gas: 388392)
@@ -70,30 +90,10 @@ Ran 35 tests for test/Wager.t.sol:GambitTest
 [PASS] test_withdraw_revertsIfNotOwner() (gas: 33255)
 [PASS] test_withdraw_revertsZeroAddress() (gas: 30430)
 [PASS] test_withdraw_revertsZeroAmount() (gas: 32666)
-Suite result: ok. 35 passed; 0 failed; 0 skipped; finished in 5.49ms (4.00ms CPU time)
-
-Ran 17 tests for test/ParimutuelPool.t.sol:ParimutuelPoolTest
-[PASS] test_claimRefund() (gas: 349523)
-[PASS] test_claim_downWins() (gas: 482601)
-[PASS] test_claim_proportionalPayout() (gas: 482603)
-[PASS] test_claim_upWins() (gas: 482840)
-[PASS] test_depositDown() (gas: 132433)
-[PASS] test_depositUp() (gas: 142474)
-[PASS] test_emptyPoolSplit() (gas: 10517)
-[PASS] test_multipleDeposits() (gas: 302277)
-[PASS] test_multipleUpDeposits() (gas: 275111)
-[PASS] test_poolSplit() (gas: 212900)
-[PASS] test_refund_voidedMarket() (gas: 322703)
-[PASS] test_resolve_upWins() (gas: 373311)
-[PASS] test_revertsIfAlreadyClaimed() (gas: 511870)
-[PASS] test_revertsIfDeadlinePassed() (gas: 46815)
-[PASS] test_revertsIfNoDepositOnWinningSide() (gas: 410499)
-[PASS] test_revertsIfNotResolved() (gas: 141677)
-[PASS] test_revertsIfZeroDeposit() (gas: 39530)
-Suite result: ok. 17 passed; 0 failed; 0 skipped; finished in 8.36ms (7.67ms CPU time)
+Suite result: ok. 35 passed; 0 failed; 0 skipped; finished in 17.81ms (15.82ms CPU time)
 
 Ran 14 tests for test/WagerSides.t.sol:WagerSidesTest
-[PASS] testFuzz_sides_fuzzOutcome(bool,bool,uint96) (runs: 256, μ: 920236, ~: 920228)
+[PASS] testFuzz_sides_fuzzOutcome(bool,bool,uint96) (runs: 256, μ: 920230, ~: 920219)
 [PASS] test_creatorDown_cancelFlow() (gas: 419317)
 [PASS] test_creatorDown_downWins_creatorWins() (gas: 585626)
 [PASS] test_creatorDown_settleRevertsIfNotResolved() (gas: 779323)
@@ -107,6 +107,6 @@ Ran 14 tests for test/WagerSides.t.sol:WagerSidesTest
 [PASS] test_side_stored_creatorDown() (gas: 362154)
 [PASS] test_side_stored_creatorUp() (gas: 362141)
 [PASS] test_sides_matrix_noFee() (gas: 2123513)
-Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 20.80ms (22.56ms CPU time)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 33.95ms (36.69ms CPU time)
 
-Ran 4 test suites in 23.42ms (36.88ms CPU time): 71 tests passed, 0 failed, 0 skipped (71 total tests)
+Ran 4 test suites in 35.99ms (62.01ms CPU time): 71 tests passed, 0 failed, 0 skipped (71 total tests)
