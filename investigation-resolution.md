@@ -203,7 +203,7 @@ block timestamp fetch failed: Unexpected token '<', "<html>
 #### SECTION 10: PRICE FEED — OPENING (10:15Z) vs EXPIRY (10:30Z) on 2026-09-10
 t=1789035300 (2026-09-10T10:15:00.000Z): [{"t":"2026-09-10T10:14:55.000Z","spotUsd":77970.84999999999},{"t":"2026-09-10T10:14:56.000Z","spotUsd":77970.805},{"t":"2026-09-10T10:14:57.000Z","spotUsd":77970.2}]
 t=1789036200 (2026-09-10T10:30:00.000Z): [{"t":"2026-09-10T10:29:55.000Z","spotUsd":77963.8325},{"t":"2026-09-10T10:29:56.000Z","spotUsd":77963.8325},{"t":"2026-09-10T10:29:57.000Z","spotUsd":77962.74999999999}]
-latest BTC/USDC: [{"spot":"77067450000000000000000","blockTimestamp":"1789048042"}]
+latest BTC/USDC: [{"spot":"77170035000000000000000","blockTimestamp":"1789048425"}]
 #### SECTION 11: ORACLE QUESTION DETAILS
 Question fields: undefined
 OracleQuestion fields: ["bindCount","binds","createdAtBlock","createdAtTimestamp","id","oracleCost","oracleQuestionId","payoutDenominator","payoutNumerators","questionKey","resolvedAt","resolvedAtBlock","reuseCount","scheduler","supersededByQuestionId","voided"]
@@ -211,14 +211,14 @@ OracleQuestion fields: ["bindCount","binds","createdAtBlock","createdAtTimestamp
 #### SECTION 12: MODULE RECORD vs INDEXER EXPIRY (staleness pattern)
 found 4 live markets
 
-LIVE BTC marketAddress=0x1609a2109b3dbcfa1250afc110a87d85e7ff3bf2 marketId=0x0000000000000000000000000000000000000000000000000000000000003f8b
-  indexer: {"marketAddress":"0x1609a2109b3dbcfa1250afc110a87d85e7ff3bf2","expiry":1789048200,"expiryISO":"2026-09-10T13:50:00.000Z","tradingStartISO":"2026-09-10T13:45:00.000Z","binaryPoolAddress":"0x363deb12f640de39b0575d158325dad098ba0d02"}
-  module:  {"market":"0x2bc6e4c60ed1F0379dC684D067Ff3824d6F7492f","pool":"0xeDc0ea676122c40A96cddE050aFE1F8Ae117065B","expiry":1786509900,"expiryISO":"2026-08-12T04:45:00.000Z","stale":true,"expiryMatchesIndexer":false}
+LIVE BTC marketAddress=0x732ad78cf4fb251057574eda8e4b4a66af176d23 marketId=0x0000000000000000000000000000000000000000000000000000000000003f8d
+  indexer: {"marketAddress":"0x732ad78cf4fb251057574eda8e4b4a66af176d23","expiry":1789048500,"expiryISO":"2026-09-10T13:55:00.000Z","tradingStartISO":"2026-09-10T13:50:00.000Z","binaryPoolAddress":"0xa475e7cff65bd47c3a0783d071e7075e035048a8"}
+  module:  {"market":"0xA1608AC8E740a2EAF8AD43110D12eddd320E85AE","pool":"0x713F702CE50EE264af12Ad0bcB94edeaaB5F3a95","expiry":1786510800,"expiryISO":"2026-08-12T05:00:00.000Z","stale":true,"expiryMatchesIndexer":false}
   binaryPoolAddress probe: {"hasCode":true,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
 
-LIVE ETH marketAddress=0x55075eb48ffc79cc7764f499bde19ede69b1126e marketId=0x0000000000000000000000000000000000000000000000000000000000003f8c
-  indexer: {"marketAddress":"0x55075eb48ffc79cc7764f499bde19ede69b1126e","expiry":1789048200,"expiryISO":"2026-09-10T13:50:00.000Z","tradingStartISO":"2026-09-10T13:45:00.000Z","binaryPoolAddress":"0xc99109a3d4fe89a4b8f81b0f8d7efb595c6da4e5"}
-  module:  {"market":"0xcB3932d1B1331FbdAd6Fa676efBbb7b03b3D187f","pool":"0x0B8c9a5F27CC42AF035409bF1D9423bA3Cd53ED4","expiry":1786510800,"expiryISO":"2026-08-12T05:00:00.000Z","stale":true,"expiryMatchesIndexer":false}
+LIVE ETH marketAddress=0xf0b6f09b6ac55858c4ea01cdd51931b6d74a028e marketId=0x0000000000000000000000000000000000000000000000000000000000003f8e
+  indexer: {"marketAddress":"0xf0b6f09b6ac55858c4ea01cdd51931b6d74a028e","expiry":1789048500,"expiryISO":"2026-09-10T13:55:00.000Z","tradingStartISO":"2026-09-10T13:50:00.000Z","binaryPoolAddress":"0x4909d1d4487fd2da18cc4af698673b06562d3931"}
+  module:  {"market":"0xbF1703142f3cea124239aa055450973aA66fBC73","pool":"0xc5e58A73162b4F304C47c49b4db8aB123ee701Cb","expiry":1786514400,"expiryISO":"2026-08-12T06:00:00.000Z","stale":true,"expiryMatchesIndexer":false}
   binaryPoolAddress probe: {"hasCode":false,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
 
 LIVE BTC marketAddress=0xeec56fc701d668e8d05bdaf8689ab44037633405 marketId=0x0000000000000000000000000000000000000000000000000000000000003f6f
