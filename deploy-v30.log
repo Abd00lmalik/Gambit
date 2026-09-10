@@ -1,6 +1,6 @@
 compiled GambitFactory: 11249 bytes of creation code
 deployer: 0x0022EC010030158cC27B283BA640706eDBa6080f
-deployer balance: 45.17184704 STT
+deployer balance: 45.13395848 STT
 using existing factory: 0xea5f3130a5ed09929da3e156ec0308c58de6a2e1
 {
   implementation: '0x688a7a70725fd3580b1B7218EAc28388Fe3a2a7a',
@@ -10,14 +10,14 @@ using existing factory: 0xea5f3130a5ed09929da3e156ec0308c58de6a2e1
   maxStake: '100000000000000000000'
 }
 implementation.creatorIsUp() (pre-init): false
-smoke market: 0x645e0186ab2ceb39506ecbeb120423290ed38fce 0x0000000000000000000000000000000000000000000000000000000000003fa7
-createDuel(DOWN) tx: 0xdc44d062aac691b98a6c18a66fbfdcc421615e8d29c65f3f45b4b7e8bef2d753
+smoke market: 0x5d06f3ddaa0dddc8c4e598897cdd5921f40a14b9 <txhash>
+createDuel(DOWN) tx: <txhash>
 create status: success gasUsed: 2882668n
-smoke duel clone: 0xba6ad8acef5e80cba08edc06f7b512d76a903f18 creatorIsUp: false
+smoke duel clone: 0x695849635c95b9a28a0198b5af83c5091cc6a7f8 creatorIsUp: false
 clone.creatorIsUp() (stored on-chain): false
 waiting 95s for the smoke duel's join deadline...
 cancel status: success
-smoke duel state after cancel (4 = CANCELLED): 4 | deployer balance: 45.153031598 STT
+smoke duel state after cancel (4 = CANCELLED): 4 | deployer balance: 45.115143038 STT
 
 === V30 DEPLOYMENT VERIFIED ===
 FACTORY_ADDRESS=0xea5f3130a5ed09929da3e156ec0308c58de6a2e1
