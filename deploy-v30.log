@@ -1,1 +1,46 @@
-Error: server returned an error response: error code -32602: invalid parameters, data: null
+file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:57
+  if (errors.length) throw new Error(errors.map((e) => e.formattedMessage).join("\n"));
+                           ^
+
+Error: ParserError: Source "../utils/LowLevelCall.sol" not found: File import callback not supported
+ --> ../utils/Create2.sol:7:1:
+  |
+7 | import {LowLevelCall} from "./LowLevelCall.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+ParserError: Source "@openzeppelin/contracts/utils/Create2.sol" not found: File import callback not supported
+ --> @openzeppelin/contracts/proxy/Clones.sol:6:1:
+  |
+6 | import {Create2} from "../utils/Create2.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+ParserError: Source "@openzeppelin/contracts/utils/Errors.sol" not found: File import callback not supported
+ --> @openzeppelin/contracts/proxy/Clones.sol:7:1:
+  |
+7 | import {Errors} from "../utils/Errors.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+ParserError: Source "contracts/Wager.sol" not found: File import callback not supported
+ --> contracts/GambitFactory.sol:5:1:
+  |
+5 | import {Wager} from "./Wager.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+ParserError: Source "contracts/interfaces/IBinaryMarketsModule.sol" not found: File import callback not supported
+ --> contracts/GambitFactory.sol:6:1:
+  |
+6 | import {IBinaryMarketsModule} from "./interfaces/IBinaryMarketsModule.sol";
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+    at compileFactory (file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:57:28)
+    at file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:61:22
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+
+Node.js v22.23.2
