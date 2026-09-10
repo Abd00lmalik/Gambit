@@ -2,6 +2,16 @@
 
 import { useEffect, useRef } from "react";
 import { createChart, ColorType, CrosshairMode, CandlestickSeries, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
+import {
+  bucketSizeFor,
+  bucketKey,
+  buildCandles,
+  feedIdFor,
+  fetchWindowPoints,
+  tailQuery,
+  FEED_URL,
+  type Candle,
+} from "@/lib/chartData";
 
 interface LiveChartProps {
   asset: string;
@@ -11,22 +21,15 @@ interface LiveChartProps {
   compact?: boolean;
 }
 
-// P2 (chart density): pick a candle bucket that yields trading-view-style
-// density from the available price points (~60-150 candles on screen).
-function bucketSizeFor(points: any[]): number {
-  if (!points || points.length < 2) return 60;
-  const span = Number(points[points.length - 1].blockTimestamp) - Number(points[0].blockTimestamp);
-  if (span <= 15 * 60) return 10; // dense feed, short window → 10s candles
-  if (span <= 45 * 60) return 30; // → 30s candles
-  return 60;                       // → 1m candles (2h window ≈ 120 candles)
-}
-
 export default function LiveChart({ asset, strike, showOverlay = true, compact = false }: LiveChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const priceLineRef = useRef<any>(null);
   const bucketSecRef = useRef<number>(60);
+  // Newest bucket rendered by setData — realtime points at/after this continue
+  // the current candle; anything older is already-rendered history.
+  const newestBucketRef = useRef<number>(0);
 
   // Initialize chart
   useEffect(() => {
@@ -92,7 +95,7 @@ export default function LiveChart({ asset, strike, showOverlay = true, compact =
     };
   }, []);
 
-  // Fetch OHLC data from DreamDEX price feed
+  // Fetch the full lookback window (paged) and render OHLC candles
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
@@ -100,63 +103,18 @@ export default function LiveChart({ asset, strike, showOverlay = true, compact =
     let cancelled = false;
     (async () => {
       try {
-        const feedId = asset === "BTC" ? "BTC/USDC" : "ETH/USDC";
-        // P2 (chart density): fetch a proper window (2h) instead of the last 200
-        // ticks (~3-4 minutes), so minute-bucketed candles render at a standard
-        // trading-view density (~120 candles) instead of 3-4 sparse ones.
-        const since = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
-        const buildQuery = (limit: number) => `{
-          PricePoint(
-            limit: ${limit},
-            order_by: {blockTimestamp: asc},
-            where: {feed_id: {_eq: "${feedId}"}, blockTimestamp: {_gte: ${since}}}
-          ) { spot blockTimestamp }
-        }`;
-
-        let points: any[] = [];
-        for (const limit of [2000, 500, 200]) {
-          const res = await fetch("https://price-feed.prd.oracle.somnia.host/v1/graphql", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: buildQuery(limit) }),
-          });
-          const data = await res.json();
-          if (data?.errors) continue; // row cap — retry smaller
-          points = data?.data?.PricePoint || [];
-          if (points.length > 0) break;
-        }
+        const nowSec = Math.floor(Date.now() / 1000);
+        const points = await fetchWindowPoints(asset, nowSec);
         if (cancelled || points.length === 0) return;
 
         const bucketSec = bucketSizeFor(points);
         bucketSecRef.current = bucketSec;
+        const candleData = buildCandles(points, bucketSec);
+        if (candleData.length === 0 || cancelled) return;
 
-        const candles = new Map<number, { open: number; high: number; low: number; close: number; time: UTCTimestamp }>();
-        for (const p of points) {
-          const price = Number(p.spot) / 1e18;
-          if (price <= 0) continue;
-          const ts = Math.floor(Number(p.blockTimestamp));
-          const key = Math.floor(ts / bucketSec) * bucketSec;
-          const existing = candles.get(key);
-          if (existing) {
-            existing.high = Math.max(existing.high, price);
-            existing.low = Math.min(existing.low, price);
-            existing.close = price;
-          } else {
-            candles.set(key, {
-              open: price,
-              high: price,
-              low: price,
-              close: price,
-              time: key as UTCTimestamp,
-            });
-          }
-        }
-
-        const candleData = Array.from(candles.values()).sort((a, b) => (a.time as number) - (b.time as number));
-        if (candleData.length > 0 && !cancelled) {
-          series.setData(candleData);
-          chartRef.current?.timeScale().fitContent();
-        }
+        newestBucketRef.current = candleData[candleData.length - 1].time;
+        series.setData(candleData as any);
+        chartRef.current?.timeScale().fitContent();
       } catch {}
     })();
 
@@ -193,7 +151,10 @@ export default function LiveChart({ asset, strike, showOverlay = true, compact =
     };
   }, [strike, showOverlay]);
 
-  // Real-time price polling (every 5s)
+  // Realtime updates — fetch every point since the newest rendered bucket and
+  // continue that bucket's candle. Points before it are already-rendered
+  // history and are ignored, so the current candle never gets repainted from
+  // stale data and a rollover always opens at the first new price.
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
@@ -202,38 +163,40 @@ export default function LiveChart({ asset, strike, showOverlay = true, compact =
     const interval = setInterval(async () => {
       if (cancelled) return;
       try {
-        const feedId = asset === "BTC" ? "BTC/USDC" : "ETH/USDC";
-        const query = `{
-          PricePoint(
-            limit: 1,
-            order_by: {blockTimestamp: desc},
-            where: {feed_id: {_eq: "${feedId}"}}
-          ) { spot blockTimestamp }
-        }`;
-        const res = await fetch("https://price-feed.prd.oracle.somnia.host/v1/graphql", {
+        const feedId = feedIdFor(asset);
+        const res = await fetch(FEED_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify({ query: tailQuery(feedId, newestBucketRef.current) }),
         });
         const data = await res.json();
-        const pp = data?.data?.PricePoint?.[0];
-        if (!pp?.spot) return;
-        const price = Number(pp.spot) / 1e18;
-        const ts = Math.floor(Number(pp.blockTimestamp));
-        const bucket = bucketSecRef.current || 60;
-        const candleKey = Math.floor(ts / bucket) * bucket as UTCTimestamp;
+        if (data?.errors) return;
+        const points = data?.data?.PricePoint || [];
+        if (points.length === 0) return;
 
-        const lastCandle = series.data()?.[series.data().length - 1] as any;
-        if (lastCandle?.time === candleKey) {
-          series.update({
-            time: candleKey,
-            open: lastCandle.open ?? price,
-            high: Math.max(lastCandle.high ?? price, price),
-            low: Math.min(lastCandle.low ?? price, price),
-            close: price,
-          });
-        } else if ((candleKey as number) > (lastCandle?.time ?? 0)) {
-          series.update({ time: candleKey, open: price, high: price, low: price, close: price });
+        const bucket = bucketSecRef.current || 60;
+        const current = bucketKey(Math.floor(Date.now() / 1000), bucket);
+
+        const candles: Candle[] = buildCandles(points, bucket);
+        for (const c of candles) {
+          if ((c.time as number) < newestBucketRef.current) continue; // history
+          if ((c.time as number) > current) continue; // future-skewed timestamp
+          if ((c.time as number) === newestBucketRef.current) {
+            // Merge into the rendered current candle (keep its open).
+            const rendered = series.data() as any[];
+            const last = rendered[rendered.length - 1];
+            series.update({
+              time: c.time as UTCTimestamp,
+              open: last?.time === c.time ? last.open : c.open,
+              high: Math.max(last?.time === c.time ? last.high : -Infinity, c.high),
+              low: Math.min(last?.time === c.time ? last.low : Infinity, c.low),
+              close: c.close,
+            });
+          } else {
+            // A gap-free rollover: newestBucket advanced — open at first price.
+            series.update({ time: c.time as UTCTimestamp, open: c.open, high: c.high, low: c.low, close: c.close });
+            newestBucketRef.current = c.time as number;
+          }
         }
       } catch {}
     }, 5000);

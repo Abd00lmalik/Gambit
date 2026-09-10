@@ -36,6 +36,10 @@ const DUEL_CREATED_EVENT = {
     { name: "stakeAmount", type: "uint256", indexed: false },
     { name: "marketAddress", type: "address", indexed: false },
     { name: "joinDeadline", type: "uint256", indexed: false },
+    // The event gained `creatorIsUp`, which changed its topic0 hash. Omitting
+    // it here made getLogs filter by the OLD hash — zero duels ever matched,
+    // so freshly created challenges never appeared in the Arena listing.
+    { name: "creatorIsUp", type: "bool", indexed: false },
   ],
 } as const;
 

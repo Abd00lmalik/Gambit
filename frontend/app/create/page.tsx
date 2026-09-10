@@ -17,7 +17,8 @@ import {
   verifyMarketAddress,
   type DreamDexMarket,
 } from "@/lib/dreamdex";
-import { FACTORY_ADDRESS } from "@/lib/contracts";
+import { FACTORY_ADDRESS, FACTORY_ABI } from "@/lib/contracts";
+import { decodeEventLog } from "viem";
 import AssetIcon from "@/components/AssetIcon";
 
 const LiveChart = dynamic(() => import("@/components/LiveChart"), { ssr: false });
@@ -160,19 +161,35 @@ export default function CreateDuelPage() {
         return;
       }
 
-      // Transaction succeeded — extract clone address from DuelCreated event
-      const duelCreatedTopic = "0x068f7dba6a893c40cac4a9566681d8fbb4ee83dd3b803d2f44adf1b85422ad5b";
-      for (const log of receipt.logs) {
-        if (
-          log.address.toLowerCase() === FACTORY_ADDRESS.toLowerCase() &&
-          log.topics[0] === duelCreatedTopic
-        ) {
-          const cloneTopic = log.topics[1];
-          if (cloneTopic) {
-            setCloneAddress("0x" + cloneTopic.slice(26));
+      // Transaction succeeded — extract clone address from the DuelCreated event.
+      // Decode with the factory ABI (single source of truth) instead of a stale
+      // hardcoded topic: the event gained a `creatorIsUp` field, which changed
+      // its topic0 hash — the old constant could never match, so cloneAddress
+      // stayed null and the invite link silently degraded to /arena?highlight=…
+      const cloneAddressFromReceipt = (() => {
+        for (const log of receipt.logs) {
+          if (log.address.toLowerCase() !== FACTORY_ADDRESS.toLowerCase()) continue;
+          try {
+            const decoded = decodeEventLog({
+              abi: FACTORY_ABI,
+              data: log.data,
+              topics: log.topics,
+            });
+            if (decoded.eventName === "DuelCreated") {
+              return decoded.args.clone as string | undefined;
+            }
+          } catch {
+            // Not a factory event we know — skip.
           }
-          break;
         }
+        return undefined;
+      })();
+      if (cloneAddressFromReceipt) {
+        setCloneAddress(cloneAddressFromReceipt);
+      } else {
+        // Receipt confirmed but no DuelCreated log decoded — surface it instead
+        // of silently showing a non-functional /arena?highlight=… link.
+        setError("Duel created, but the confirmation event could not be read. Open your duel from the Arena list.");
       }
 
       // NOW show the success screen — receipt is confirmed
@@ -262,6 +279,10 @@ export default function CreateDuelPage() {
               ? `Your challenge is live${side ? ` — you picked ${side === "UP" ? "▲ Up" : "▼ Down"}, your opponent takes the ${side === "UP" ? "▼ Down" : "▲ Up"} side` : ""}. Share the invite or wait for someone in the Arena to accept.`
               : "Your squad pool is live. Share the invite link with your group."}
           </p>
+
+          {error && (
+            <p className="font-body text-[11px] text-down mb-4">{error}</p>
+          )}
 
           <div className="rounded-xl border border-teal/30 bg-teal/5 p-3 mb-4">
             <p className="font-body text-[10px] text-gray-400 mb-1 uppercase tracking-wider">Invite Link</p>

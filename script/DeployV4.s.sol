@@ -14,7 +14,8 @@ contract DeployFactory is Script {
             0x25265b9dBEb6c653b0CA281110Bb0697a9685107, // feeRecipient
             250,                                         // 2.5% fee
             0.1 ether,                                   // minStake
-            100 ether                                    // maxStake
+            100 ether,                                   // maxStake
+            address(0)                                   // implementation (deploy inline)
         );
 
         vm.stopBroadcast();

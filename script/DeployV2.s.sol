@@ -12,7 +12,8 @@ contract DeployV2 is Script {
             vm.addr(vm.envUint("PRIVATE_KEY")),
             250,
             0.1 ether,
-            100 ether
+            100 ether,
+            address(0)
         );
 
         vm.stopBroadcast();

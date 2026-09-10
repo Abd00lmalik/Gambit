@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:pfp": "tsx scripts/test-pfp.mts"
+    "test:pfp": "tsx scripts/test-pfp.mts",
+    "test:chart": "tsx scripts/test-chart-data.mts"
   },
   "dependencies": {
     "@noble/hashes": "1.8.0",

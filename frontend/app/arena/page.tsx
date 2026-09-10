@@ -8,7 +8,8 @@ import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
 import { usePublicClient } from "wagmi";
 import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { somnia } from "@/lib/config";
-import { FACTORY_ADDRESS } from "@/lib/contracts";
+import { FACTORY_ADDRESS, FACTORY_ABI } from "@/lib/contracts";
+import { decodeEventLog } from "viem";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
 import AssetIcon from "@/components/AssetIcon";
 import PlayerAvatar from "@/components/PlayerAvatar";
@@ -26,17 +27,23 @@ async function resolveHighlightToClone(
       hash: highlight as `0x${string}`,
     });
     if (!receipt) return null;
-    const duelCreatedTopic =
-      "0x068f7dba6a893c40cac4a9566681d8fbb4ee83dd3b803d2f44adf1b85422ad5b";
+    // Decode with the factory ABI — the DuelCreated topic hash changed when
+    // `creatorIsUp` was added to the event, so a hardcoded constant silently
+    // stopped matching and the ?highlight=… fallback never resolved.
     for (const log of receipt.logs) {
-      if (
-        log.address.toLowerCase() === FACTORY_ADDRESS.toLowerCase() &&
-        log.topics[0] === duelCreatedTopic
-      ) {
-        const cloneTopic = log.topics[1];
-        if (cloneTopic) {
-          return "0x" + cloneTopic.slice(26);
+      if (log.address.toLowerCase() !== FACTORY_ADDRESS.toLowerCase()) continue;
+      try {
+        const decoded = decodeEventLog({
+          abi: FACTORY_ABI,
+          data: log.data,
+          topics: log.topics,
+        });
+        if (decoded.eventName === "DuelCreated") {
+          const clone = decoded.args.clone as string | undefined;
+          if (clone) return clone;
         }
+      } catch {
+        // Not a factory event we know — skip.
       }
     }
   } catch {}

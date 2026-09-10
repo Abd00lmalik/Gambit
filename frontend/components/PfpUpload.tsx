@@ -54,6 +54,9 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
       onUploaded?.(data.pfpUrl);
     } catch (e) {
       setError("Upload failed. Try again.");
+      // Drop the optimistic preview — leaving it up makes a FAILED upload look
+      // like it stuck (until the next reload shows the old/default avatar).
+      setPreview(null);
     } finally {
       setIsUploading(false);
     }
