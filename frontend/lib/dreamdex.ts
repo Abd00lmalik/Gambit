@@ -347,6 +347,27 @@ export async function verifyMarketAddress(
         if (!codeCheck.valid) {
           return { valid: false, marketId, expiry: market.expiry, clobStatus: market.clobStatus, error: codeCheck.error };
         }
+
+        // P1: staleness check — the module record must describe THE SAME window
+        // the indexer row describes. DreamDEX recurring series reuse marketIds
+        // and the module record can point at a PAST window's Market contract
+        // (verified 2026-09-10) whose payouts are frozen at that old outcome —
+        // duels created against such records can never settle correctly.
+        const moduleExpiry = codeCheck.moduleExpiry;
+        const indexerExpiry = Number(market.expiry);
+        if (
+          moduleExpiry != null &&
+          indexerExpiry > 0 &&
+          Math.abs(moduleExpiry - indexerExpiry) > 120
+        ) {
+          return {
+            valid: false,
+            marketId,
+            expiry: market.expiry,
+            clobStatus: market.clobStatus,
+            error: `Stale on-chain market record (module window ends ${new Date(moduleExpiry * 1000).toISOString()}, expected ${new Date(indexerExpiry * 1000).toISOString()}). This market cannot settle — pick the next window.`,
+          };
+        }
       }
 
       return { valid: true, marketId, expiry: market.expiry, clobStatus: market.clobStatus };
@@ -395,7 +416,7 @@ const BINARY_MARKETS_ABI = [
 async function verifyMarketImplementation(
   marketId: string,
   publicClient: PublicClient
-): Promise<{ valid: boolean; error?: string }> {
+): Promise<{ valid: boolean; error?: string; moduleExpiry?: number }> {
   try {
     // Step 1: Resolve the real Market contract address from BinaryMarketsModule.
     // The raw marketAddress from the indexer is a CLOB reactivity address — codeless by design.
@@ -417,7 +438,11 @@ async function verifyMarketImplementation(
       return { valid: false, error: "Market contract has no deployed code" };
     }
 
-    return { valid: true };
+    const moduleExpiryRaw = (marketRecord as any).expiry;
+    return {
+      valid: true,
+      moduleExpiry: moduleExpiryRaw != null ? Number(moduleExpiryRaw) : undefined,
+    };
   } catch {
     return { valid: false, error: "Failed to verify market implementation on-chain" };
   }
@@ -536,6 +561,114 @@ export async function fetchOracleQuestionId(marketAddress: Address): Promise<str
     if (qid) return qid;
   }
   return null;
+}
+
+// ── Oracle-based resolution (P1 fix) ───────────────────────────
+// DreamDEX's Market contracts CANNOT be trusted for settlement timing:
+//  - isResolved() flips true with placeholder payouts while still trading
+//  - BinaryMarketsModule records for recurring market series can point at a
+//    PAST window's Market contract (verified 2026-09-10: module expiry
+//    2026-08-11 for a market that expired 2026-09-10), freezing payouts at
+//    that old outcome.
+// The genuine resolution is the ORACLE ANSWER: DreamDEX resolves "closes at or
+// above its opening price" by writing OracleAnswer rows (final price in cents)
+// via a Somnia transaction. This is the same data DreamDEX's own UI uses.
+export interface OracleResolutionData {
+  /** Market row found in the indexer */
+  found: boolean;
+  /** DreamDEX indexer finalization status (clobStatus) */
+  clobStatus: string | null;
+  indexerFinalized: boolean;
+  /** Market expiry (seconds) from the indexer — the authoritative window */
+  expiry: number | null;
+  /** On-chain BinaryMarketsModule expiry for this marketId (may be STALE) */
+  moduleExpiry: number | null;
+  /** Module record is stale (points at a different window than the indexer) */
+  moduleStale: boolean;
+  /** Opening price in cents (OracleAnswer for the reference question) */
+  openingCents: number | null;
+  /** Final settled price in cents (OracleAnswer for the market question) */
+  finalCents: number | null;
+  /** Oracle resolution transaction hash (on-chain resolution proof) */
+  oracleTxHash: string | null;
+  oracleVoided: boolean;
+  oracleResolvedAt: number | null;
+}
+
+export async function fetchOracleResolutionData(
+  marketAddress: Address,
+  publicClient?: { getTransactionReceipt: (args: { hash: `0x${string}` }) => Promise<any> }
+): Promise<OracleResolutionData | null> {
+  // 1. Market row (has expiry, clobStatus, oracleQuestionId, id)
+  let market: any = null;
+  for (const url of [PROD_GRAPHQL_URL, DEV_GRAPHQL_URL]) {
+    const data = await gqlRaw(url, `{
+      Market(where: {marketAddress: {_eq: "${String(marketAddress).toLowerCase()}"}}, limit: 1) {
+        id marketAddress expiry clobStatus tradingStart oracleQuestionId
+      }
+    }`);
+    const m = data?.Market?.[0];
+    if (m) { market = m; break; }
+  }
+  if (!market) return null;
+
+  const indexerFinalized = (() => {
+    const s = String(market.clobStatus || "").toLowerCase();
+    return s.includes("final") || s.includes("settl") || s.includes("resolv");
+  })();
+
+  // 3. Oracle answers: final (market question) + opening (reference question)
+  let finalCents: number | null = null;
+  let openingCents: number | null = null;
+  let oracleTxHash: string | null = null;
+  let oracleVoided = false;
+  let oracleResolvedAt: number | null = null;
+
+  if (market.oracleQuestionId) {
+    const ansData = await gqlRaw(PROD_GRAPHQL_URL, `{
+      OracleAnswer(where: {id: {_eq: "${market.oracleQuestionId}"}}, limit: 1) {
+        id numericValue resolvedAt txHash voided
+      }
+    }`);
+    const ans = ansData?.OracleAnswer?.[0];
+    if (ans?.numericValue != null) {
+      finalCents = Number(ans.numericValue);
+      oracleTxHash = ans.txHash || null;
+      oracleVoided = !!ans.voided;
+      oracleResolvedAt = ans.resolvedAt != null ? Number(ans.resolvedAt) : null;
+    }
+  }
+
+  // Opening = OracleAnswer for the reference question (MarketReferenceLink)
+  try {
+    const refData = await gqlRaw(PROD_GRAPHQL_URL, `{
+      MarketReferenceLink(limit: 1, where: {market_id: {_eq: "${market.id}"}}) {
+        referenceQuestionId
+      }
+    }`);
+    const refId = refData?.MarketReferenceLink?.[0]?.referenceQuestionId;
+    if (refId) {
+      const ansData = await gqlRaw(PROD_GRAPHQL_URL, `{
+        OracleAnswer(where: {id: {_eq: "${refId}"}}, limit: 1) { id numericValue }
+      }`);
+      const ans = ansData?.OracleAnswer?.[0];
+      if (ans?.numericValue != null) openingCents = Number(ans.numericValue);
+    }
+  } catch {}
+
+  return {
+    found: true,
+    clobStatus: market.clobStatus ?? null,
+    indexerFinalized,
+    expiry: market.expiry != null ? Number(market.expiry) : null,
+    moduleExpiry: null, // filled by the hook (needs the on-chain module read)
+    moduleStale: false, // filled by the hook
+    openingCents,
+    finalCents,
+    oracleTxHash,
+    oracleVoided,
+    oracleResolvedAt,
+  };
 }
 
 export async function fetchOpeningPrices(marketIds: string[]): Promise<Record<string, number | null>> {

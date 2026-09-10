@@ -150,15 +150,24 @@ contract Wager {
         require(market.isResolved(), "not resolved");
         require(!market.isVoided(), "voided use refund()");
 
-        // ── Anti-premature-settlement guard ────────────────
-        // DreamDEX Market contracts report isResolved() == true with placeholder
-        // payouts ([1e7, 0]) WHILE THE MARKET IS STILL TRADING (verified on-chain
-        // 2026-09-10: five Trading markets all returned isResolved=true /
-        // [10000000,0]). Settling on that data pays the wrong player. The market
-        // can only be final after its expiry timestamp (module record index 13).
+        // ── Anti-premature/stale-settlement guard ──────────
+        // Verified on-chain 2026-09-10:
+        //  (1) DreamDEX Market contracts report isResolved() == true with
+        //      placeholder payouts ([1e7, 0]) WHILE THE MARKET IS STILL TRADING.
+        //      → never settle before the market's expiry timestamp.
+        //  (2) DreamDEX RECURRING market series reuse marketIds while the
+        //      BinaryMarketsModule record can point at a PAST window's Market
+        //      contract (module expiry 2026-08-11 for a market that expired
+        //      2026-09-10) whose payouts are frozen at that old outcome.
+        //      createDuel() always caps joinDeadline at expiry-60s of the market
+        //      the creator picked, so a genuine record's expiry is within a
+        //      minute of the join deadline. A record expiring DAYS before it is
+        //      stale — refuse to settle (funds stay escrowed rather than paid
+        //      to the wrong player).
         uint64 marketExpiry = _marketExpiry(marketId);
         if (marketExpiry != 0) {
             require(block.timestamp >= marketExpiry, "market not final");
+            require(marketExpiry + 1 hours > joinDeadline, "stale market record");
         }
 
         uint256[] memory p = market.payoutNumerators();

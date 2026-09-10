@@ -167,8 +167,7 @@ contract WagerPrematureSettlementTest is Test {
 
     /// @notice Zero expiry (no module data) skips the guard — legacy/test behaviour.
     function test_settle_zeroExpirySkipsGuard() public {
-        module.setRecord(MARKET_ID, address(market), address(0), 0);
-        // remove record entirely: fresh id never set → all-zero record, expiry 0
+        // fresh id never set → all-zero record, expiry 0
         bytes32 freshId = keccak256("never-set-record");
 
         vm.deal(alice, STAKE);
@@ -189,6 +188,51 @@ contract WagerPrematureSettlementTest is Test {
 
         // No expiry data → guard skipped → placeholder settles (legacy semantics)
         w.settle();
+        assertEq(uint8(w.state()), uint8(Wager.WagerState.SETTLED));
+    }
+
+    /// @notice THE stale-record regression (the actual reported bug, found
+    ///         on-chain 2026-09-10): the module record for the duel's marketId
+    ///         points at a PAST window's Market contract (expiry 2026-08-11)
+    ///         whose payouts are frozen at that old outcome, while the duel was
+    ///         created for a market window on 2026-09-10. settle() must refuse —
+    ///         paying the frozen payouts gives the win to whichever side won the
+    ///         OLD market (here: the creator, since the placeholder is UP-won).
+    function test_settle_revertsOnStaleModuleRecord() public {
+        // Record from a month-old window: expiry long past, BEFORE the duel's
+        // join deadline (which was capped at the CURRENT window's expiry).
+        uint64 staleExpiry = uint64(block.timestamp - 30 days);
+        Wager w = _createAndJoin(staleExpiry);
+
+        // The stale market says "resolved, UP won" (frozen placeholder)
+        assertTrue(market.isResolved());
+
+        // Overwrite with an expiry 2 hours in the past (beyond the 1-hour grace,
+        // and before the duel's join deadline): block.timestamp >= expiry passes
+        // the "not final" check, exposing the staleness check specifically.
+        module.setRecord(MARKET_ID, address(market), address(0), uint64(block.timestamp - 2 hours));
+        vm.expectRevert("stale market record");
+        w.settle();
+
+        // Funds untouched — no wrongful payout
+        assertEq(address(w).balance, STAKE * 2, "pot must stay escrowed");
+        assertEq(uint8(w.state()), uint8(Wager.WagerState.LOCKED));
+    }
+
+    /// @notice A CURRENT window's record (expiry after joinDeadline) settles
+    ///         normally once its expiry passes and the oracle writes real payouts.
+    function test_settle_currentRecord_settlesAfterExpiry() public {
+        uint64 expiry = uint64(block.timestamp + 10 minutes);
+        // joinDeadline is now + 5 min; expiry (now+10) > joinDeadline → current
+        Wager w = _createAndJoin(expiry);
+
+        market.genuinelyResolve(10_000_000, 0); // oracle: UP won
+        vm.warp(expiry + 1);
+
+        uint256 aliceBefore = alice.balance;
+        w.settle(); // creator picked UP and UP won → creator wins
+        uint256 fee = (STAKE * 2 * 250) / 10000;
+        assertEq(alice.balance - aliceBefore, STAKE * 2 - fee);
         assertEq(uint8(w.state()), uint8(Wager.WagerState.SETTLED));
     }
 }

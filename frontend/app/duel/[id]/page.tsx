@@ -12,6 +12,7 @@ import CountdownTimer from "@/components/CountdownTimer";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
 import OracleVerification from "@/components/OracleVerification";
 import { useDuelReads, useDuelActions, useMarketStatus, useResolvedMarketAddress } from "@/hooks/useContracts";
+import { useOracleResolution } from "@/hooks/useOracleResolution";
 import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
 import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { useLivePrices } from "@/hooks/useLivePrices";
@@ -45,12 +46,15 @@ export default function DuelPage({ params }: { params: { id: string } }) {
 
   const duel = useDuelReads(duelAddress);
   const prices = useLivePrices();
-  const { resolvedMarketAddress, poolAddress } = useResolvedMarketAddress(duel.marketId);
+  const { resolvedMarketAddress, poolAddress, moduleExpiry } = useResolvedMarketAddress(duel.marketId);
   // Use resolved Market contract for on-chain IBinaryMarket reads (isResolved, status, etc.)
   // NOT the raw CLOB listing address from duel.marketAddress, which may have no EVM code
   const market = useMarketStatus(resolvedMarketAddress);
   // Fallback: if market address has no code (Era 3), also check pool address
   const poolMarket = useMarketStatus(!market.isResolved && !market.isVoided ? poolAddress : undefined);
+  // P1: genuine, final resolution — oracle answer + confirmed resolution tx +
+  // expiry passed. Never trusts isResolved()/payouts alone (placeholders).
+  const resolution = useOracleResolution(duel.marketAddress, moduleExpiry);
   const actions = useDuelActions(duelAddress);
   const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
 
@@ -61,15 +65,51 @@ export default function DuelPage({ params }: { params: { id: string } }) {
     }
   }, [actions.joinStep, duel.refetch]);
 
-  // Determine effective market resolution (market or pool fallback)
-  // Also use payoutNumerators as a secondary indicator — if payouts exist, market is resolved
-  const marketHasPayouts = !!(market.payoutNumerators && market.payoutNumerators.length >= 2 &&
-    (Number(market.payoutNumerators[0]) > 0 || Number(market.payoutNumerators[1]) > 0));
-  const poolHasPayouts = !!(poolMarket.payoutNumerators && poolMarket.payoutNumerators.length >= 2 &&
-    (Number(poolMarket.payoutNumerators[0]) > 0 || Number(poolMarket.payoutNumerators[1]) > 0));
-  const effectiveIsResolved = (market.isResolved ?? false) || (poolMarket.isResolved ?? false) || marketHasPayouts || poolHasPayouts;
-  // Use whichever market resolved for payout check
-  const effectivePayouts = market.payoutNumerators ?? poolMarket.payoutNumerators;
+  // ── Resolution gate (P1 fix — premature winner popup) ──────────────────
+  // Root cause found on-chain (2026-09-10):
+  //  1. DreamDEX Market contracts report isResolved() === true with PLACEHOLDER
+  //     payouts ([10000000, 0]) while the market is still trading.
+  //  2. WORSE: recurring DreamDEX series reuse marketIds and the
+  //     BinaryMarketsModule record can point at a PAST window's Market contract
+  //     (module expiry 2026-08-11 for a duel whose market expired 2026-09-10),
+  //     freezing payouts at that old outcome — every duel on such a market
+  //     showed the OLD outcome's winner, often prematurely and wrongly.
+  //
+  // The winner is now shown ONLY when the oracle's final answer exists, its
+  // resolution tx is confirmed on-chain, the market's expiry has passed and the
+  // indexer marks the market finalized (see useOracleResolution).
+  const resolvedFromMarket = market.isResolved === true;
+  const resolvedFromPool = !resolvedFromMarket && poolMarket.isResolved === true;
+  const resolvedContractReportsResolved = resolvedFromMarket || resolvedFromPool;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expiryPassed = resolution?.expiryPassed ?? false;
+  const effectiveIsResolved = resolution?.finalized ?? false;
+
+  // Which side actually won, per the ORACLE (final price vs opening price).
+  const oracleWinningSide = resolution?.winningSide ?? null;
+
+  // Which side the on-chain contract claims won (placeholder-prone — used only
+  // as a consistency check, never as the winner source).
+  const contractWinningSide: "UP" | "DOWN" | null = (() => {
+    if (!resolvedContractReportsResolved) return null;
+    const payouts = resolvedFromMarket ? market.payoutNumerators : poolMarket.payoutNumerators;
+    if (!payouts || payouts.length < 2) return null;
+    const up = Number(payouts[0]) > 0;
+    const down = Number(payouts[1]) > 0;
+    if (up === down) return null; // split/void — no directional winner
+    return up ? "UP" : "DOWN";
+  })();
+
+  // On-chain market record is stale (points at a different window) — a known
+  // DreamDEX marketId-reuse bug. Settlement on-chain will (and must) refuse.
+  const marketRecordStale = !!resolution?.moduleStale;
+  const oracleVsContractMismatch =
+    oracleWinningSide != null &&
+    contractWinningSide != null &&
+    oracleWinningSide !== contractWinningSide;
+
+  const effectivePayouts = resolvedFromMarket ? market.payoutNumerators : poolMarket.payoutNumerators;
 
   // Fetch market data from DreamDEX indexer (reuses Create Duel logic)
   useEffect(() => {
@@ -123,13 +163,20 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const isJoiner = connectedAddress?.toLowerCase() === duel.playerB?.toLowerCase();
   const hasJoined = !!duel.playerB && duel.playerB !== "0x0000000000000000000000000000000000000000";
 
-  // Determine winner: payoutNumerators[0] = Up/Yes (player A wins), [1] = Down/No (player B wins)
+  // ── Sides (P2 fix) ──────────────────────────────────────────────────────
+  // The creator's side is stored on the clone (creatorIsUp). Legacy clones
+  // (pre creatorIsUp) revert the read → undefined → default true (old contract
+  // implicitly assumed playerA = Up).
+  const creatorUp = duel.creatorIsUp ?? true;
+  const creatorSide = creatorUp ? "UP" : "DOWN";
+  const joinerSide = creatorUp ? "DOWN" : "UP";
+
+  // Winner: the ORACLE's winning side compared against the STORED sides.
+  // (payoutNumerators are placeholder-prone — never the winner source.)
   const isWinner = (() => {
-    if (!effectiveIsResolved || !effectivePayouts || effectivePayouts.length < 2) return false;
-    const upWins = Number(effectivePayouts[0]) > 0;
-    const downWins = Number(effectivePayouts[1]) > 0;
-    if (upWins) return isCreator;
-    if (downWins) return isJoiner;
+    if (!effectiveIsResolved || !oracleWinningSide) return false;
+    if (isCreator) return creatorSide === oracleWinningSide;
+    if (isJoiner) return joinerSide === oracleWinningSide;
     return false;
   })();
 
@@ -178,7 +225,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           <PlayerCard
             label="A"
             address={duel.playerA!}
-            side="UP"
+            side={creatorSide}
             stake={duel.stakeAmount || "0"}
             isCreator
             isActive={state === DuelState.LOCKED}
@@ -216,7 +263,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             <PlayerCard
               label="B"
               address={duel.playerB!}
-              side="DOWN"
+              side={joinerSide}
               stake={duel.stakeAmount || "0"}
               isActive={state === DuelState.LOCKED}
             />
@@ -310,15 +357,21 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           </motion.div>
         )}
 
-        {/* Expiry notice if passed but not yet resolved */}
-        {state === DuelState.LOCKED && marketData && marketData.expiry && Math.floor(Date.now() / 1000) > marketData.expiry && !effectiveIsResolved && (
+        {/* Expiry notice if passed but not yet verifiably resolved */}
+        {state === DuelState.LOCKED && marketData && marketData.expiry && nowSec >= marketData.expiry && !effectiveIsResolved && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.4 }}
             className="flex flex-col items-center gap-2 glass rounded-xl p-4 mb-6 border border-down/20 bg-down/5"
           >
-            <span className="font-body text-xs text-down">Market expiry passed, awaiting resolution...</span>
+            {/* P1: market contract may claim "resolved" with placeholder payouts
+                before the oracle finalizes — never show a winner in that window */}
+            <span className="font-body text-xs text-down">
+              {resolvedContractReportsResolved
+                ? "Market ended — waiting for DreamDEX oracle to finalize the result..."
+                : "Market expiry passed, awaiting resolution..."}
+            </span>
           </motion.div>
         )}
 
@@ -329,6 +382,22 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           transition={{ delay: 0.5 }}
           className="space-y-3"
         >
+          {/* P1: on-chain market record stale (DreamDEX marketId reuse) — the
+              on-chain contract's frozen payouts disagree with the oracle's real
+              outcome. Settlement must NOT proceed; funds recovery needs the
+              market record refreshed. */}
+          {state === DuelState.LOCKED && (marketRecordStale || oracleVsContractMismatch) && (
+            <div className="rounded-xl border border-down/30 bg-down/5 p-4 text-center">
+              <p className="font-display text-base font-bold text-down mb-1">Settlement unavailable — market record mismatch</p>
+              <p className="font-body text-xs text-gray-400 leading-relaxed">
+                The on-chain market record for this duel points at a different market window than the one
+                you dueled on (a DreamDEX marketId-reuse bug). The oracle's actual outcome
+                {oracleWinningSide ? ` (${oracleWinningSide} won)` : ""} may differ from the stale on-chain
+                payouts, so on-chain settlement is blocked to protect funds. This duel needs manual recovery.
+              </p>
+            </div>
+          )}
+
           {/* Join button (if not joined and not creator and deadline not passed) */}
           {!hasJoined && !isCreator && state === DuelState.CREATED && (
             <button
@@ -356,8 +425,10 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </button>
           )}
 
-          {/* Claim button — only visible to the winner when market resolved */}
-          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isWinner && (
+          {/* Claim button — only visible to the winner when the market has
+              GENUINELY and FINALLY resolved (oracle-verified) and the on-chain
+              market record is consistent (settle() can actually pay) */}
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isWinner && !marketRecordStale && !oracleVsContractMismatch && (
             <div className="rounded-xl border border-up/30 bg-up/5 p-5 mb-3">
               <div className="text-center mb-4">
                 <p className="font-display text-2xl font-bold text-up mb-1">You Won!</p>
@@ -389,8 +460,9 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </div>
           )}
 
-          {/* Market resolved but not the winner or can't determine winner — show settle for anyone (permissionless) */}
-          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isWinner && (
+          {/* Market genuinely resolved but connected wallet is not the winner —
+              settle is permissionless, anyone can push the payout through */}
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isWinner && !marketRecordStale && !oracleVsContractMismatch && (
             <button
               disabled={actions.isPending || isChecking}
               onClick={async () => {

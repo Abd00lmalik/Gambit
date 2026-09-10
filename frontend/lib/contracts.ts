@@ -6,6 +6,14 @@ export const BINARY_MARKETS_MODULE_ADDRESS = "0x3ecC694Cef705358864a646142ac17A9
 export const VENUE_ID_TESTNET = "0x679795a0195a1b76cdebb7c51d74e058aee92919b8c3389af86ef24535e8a28c" as const;
 export const POOL_FACTORY_ADDRESS = "0x0000000000000000000000000000000000000000" as const; // Deploy after contract deployment
 
+/**
+ * Factories that created duels BEFORE the creatorIsUp (side) support was added.
+ * Legacy clones can only be cancelled by the factory that created them, so flows
+ * like cancel/refund must route to the duel's own factory (read factory() from the
+ * clone) rather than the current one.
+ */
+export const LEGACY_FACTORY_ADDRESS = "0x089079B21dD6A495D4c3f6844ABCab806fcf5d9E" as const;
+
 export const FACTORY_ABI = [
   {
     type: "function",
@@ -14,6 +22,7 @@ export const FACTORY_ABI = [
       { name: "_marketAddress", type: "address" },
       { name: "_marketId", type: "bytes32" },
       { name: "_joinDeadline", type: "uint256" },
+      { name: "_creatorIsUp", type: "bool" },
     ],
     outputs: [{ name: "clone", type: "address" }],
     stateMutability: "payable",
@@ -69,6 +78,7 @@ export const FACTORY_ABI = [
       { name: "stakeAmount", type: "uint256", indexed: false },
       { name: "marketAddress", type: "address", indexed: false },
       { name: "joinDeadline", type: "uint256", indexed: false },
+      { name: "creatorIsUp", type: "bool", indexed: false },
     ],
   },
 ] as const;
@@ -203,9 +213,24 @@ export const WAGER_ABI = [
       { name: "_marketId", type: "bytes32" },
       { name: "_feeBps", type: "uint256" },
       { name: "_joinDeadline", type: "uint256" },
+      { name: "_creatorIsUp", type: "bool" },
     ],
     outputs: [],
     stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "creatorIsUp",
+    inputs: [],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "factory",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
   },
 ] as const;
 

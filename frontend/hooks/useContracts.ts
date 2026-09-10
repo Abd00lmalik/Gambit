@@ -28,7 +28,7 @@ export function useDuelFactory() {
   const { ensureCorrectNetwork } = useEnsureCorrectNetwork();
 
   const createDuel = useCallback(
-    async (marketAddress: Address, marketId: string, joinDeadlineSeconds: number, stakeEth: string) => {
+    async (marketAddress: Address, marketId: string, joinDeadlineSeconds: number, stakeEth: string, creatorIsUp: boolean = true) => {
       if (!address) throw new Error("Wallet not connected");
       const ok = await ensureCorrectNetwork();
       if (!ok) throw new Error("Wrong network");
@@ -37,7 +37,7 @@ export function useDuelFactory() {
         address: FACTORY_ADDRESS,
         abi: FACTORY_ABI,
         functionName: "createDuel",
-        args: [marketAddress, marketId as `0x${string}`, BigInt(deadline)],
+        args: [marketAddress, marketId as `0x${string}`, BigInt(deadline), creatorIsUp],
         value: parseEther(stakeEth),
         gas: BigInt(5000000),
       });
@@ -257,6 +257,24 @@ export function useDuelReads(duelAddress: Address | undefined) {
     query: { enabled: !!duelAddress },
   });
 
+  // Which side the creator picked (true = UP). Legacy clones (pre creatorIsUp)
+  // revert this read — undefined → callers default to `true` (old behaviour).
+  const creatorIsUp = useReadContract({
+    address: duelAddress,
+    abi: WAGER_ABI,
+    functionName: "creatorIsUp",
+    query: { enabled: !!duelAddress, retry: 0 },
+  });
+
+  // The factory that created this clone — needed to route cancel/refund to the
+  // right factory (legacy duels were created by LEGACY_FACTORY_ADDRESS).
+  const duelFactory = useReadContract({
+    address: duelAddress,
+    abi: WAGER_ABI,
+    functionName: "factory",
+    query: { enabled: !!duelAddress, retry: 0 },
+  });
+
   const duelState = state.data !== undefined ? Number(state.data) as DuelState : undefined;
 
   return {
@@ -270,6 +288,8 @@ export function useDuelReads(duelAddress: Address | undefined) {
     joinDeadline: joinDeadline.data ? Number(joinDeadline.data) : undefined,
     joinDeadlineRemaining: joinDeadlineRemaining.data ? Number(joinDeadlineRemaining.data) : undefined,
     owner: owner.data as Address | undefined,
+    creatorIsUp: creatorIsUp.data as boolean | undefined,
+    duelFactory: duelFactory.data as Address | undefined,
     isLoading: playerA.isLoading || state.isLoading,
     refetch: () => {
       playerA.refetch();
@@ -323,11 +343,17 @@ export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
   const resolved = record.data as any;
   const marketAddress = resolved?.[8] as Address | undefined;
   const poolAddress = resolved?.[9] as Address | undefined;
+  const tradingStart = resolved?.[12] != null ? Number(resolved[12]) : undefined;
+  const expiry = resolved?.[13] != null ? Number(resolved[13]) : undefined;
 
-  // For the hook consumer: prefer market address, but also expose pool as fallback
+  // For the hook consumer: prefer market address, but also expose pool as fallback.
+  // moduleTradingStart/moduleExpiry are used for STALENESS detection: DreamDEX
+  // recurring series can leave the module record pointing at a past window.
   return {
     resolvedMarketAddress: marketAddress,
     poolAddress: poolAddress,
+    moduleTradingStart: tradingStart,
+    moduleExpiry: expiry,
     isLoading: record.isLoading,
   };
 }

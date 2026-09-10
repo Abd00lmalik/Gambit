@@ -117,7 +117,9 @@ export default function CreateDuelPage() {
       const deadline = marketExpiry > 0 ? Math.min(calculatedDeadline, marketExpiry - 60) : calculatedDeadline;
       // Ensure deadline is always in the future
       const finalDeadline = Math.max(deadline, nowSec + 60);
-      const hash = await createDuel(marketAddress, marketId, finalDeadline - nowSec, String(stakeAmount));
+      // P2: the creator's chosen side is stored on-chain (creatorIsUp) — the
+      // joiner automatically takes the opposite side.
+      const hash = await createDuel(marketAddress, marketId, finalDeadline - nowSec, String(stakeAmount), side === "UP");
 
       // Wait for receipt BEFORE showing success screen.
       // Never show "Duel Created!" based on hash alone — the tx may have reverted on-chain.
@@ -180,7 +182,7 @@ export default function CreateDuelPage() {
     } finally {
       setVerifying(false);
     }
-  }, [isValid, selectedMarket, selectedInterval, stakeAmount, createDuel, publicClient]);
+  }, [isValid, selectedMarket, selectedInterval, stakeAmount, side, createDuel, publicClient]);
 
   // Mode selection screen
   if (!mode) {
@@ -257,7 +259,7 @@ export default function CreateDuelPage() {
           </h2>
           <p className="font-body text-sm text-gray-400 mb-4">
             {mode === "duel"
-              ? "Your challenge is live. Share the invite or wait for someone in the Arena to accept."
+              ? `Your challenge is live${side ? ` — you picked ${side === "UP" ? "▲ Up" : "▼ Down"}, your opponent takes the ${side === "UP" ? "▼ Down" : "▲ Up"} side` : ""}. Share the invite or wait for someone in the Arena to accept.`
               : "Your squad pool is live. Share the invite link with your group."}
           </p>
 

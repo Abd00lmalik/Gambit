@@ -118,3 +118,109 @@ const oqSchema = await gql("https://prd.smk.somnia.host/v1/graphql", `{ __type(n
 console.log("OracleQuestion fields:", JSON.stringify(oqSchema?.data?.__type?.fields?.map((f) => f.name)));
 
 console.log("#### DEEP DIVE COMPLETE");
+
+// ── 12. Systematic staleness check: module record expiry vs indexer expiry ──
+console.log("#### SECTION 12: MODULE RECORD vs INDEXER EXPIRY (staleness pattern)");
+const MODULE = "0x3ecC694Cef705358864a646142ac17A90E29e388";
+const MODULE_ABI2 = [{
+  name: "markets", type: "function", stateMutability: "view",
+  inputs: [{ name: "marketId", type: "bytes32" }],
+  outputs: [{
+    name: "", type: "tuple", components: [
+      { name: "oracleQuestionId", type: "uint256" }, { name: "outcomeSlotCount", type: "uint8" },
+      { name: "voidPolicy", type: "uint8" }, { name: "collateral", type: "address" },
+      { name: "originOperatorId", type: "uint32" }, { name: "originVenueId", type: "bytes32" },
+      { name: "oracleAdapter", type: "address" }, { name: "creator", type: "address" },
+      { name: "market", type: "address" }, { name: "pool", type: "address" },
+      { name: "yesId", type: "uint256" }, { name: "noId", type: "uint256" },
+      { name: "tradingStart", type: "uint64" }, { name: "expiry", type: "uint64" },
+    ],
+  }],
+}];
+
+const now2 = Math.floor(Date.now() / 1000);
+const liveQ = `{
+  Market(where: {marketType: {_eq: "BINARY"}, clobStatus: {_eq: "Trading"}, expiry: {_gt: ${now2 + 60}}}, order_by: {expiry: asc}, limit: 4) {
+    marketAddress marketId asset expiry tradingStart binaryPoolAddress
+  }
+}`;
+const live = await gql("https://prd.smk.somnia.host/v1/graphql", liveQ);
+const rows = live?.data?.Market ?? [];
+console.log(`found ${rows.length} live markets`);
+for (const m of rows) {
+  const indexer = {
+    marketAddress: m.marketAddress,
+    expiry: Number(m.expiry),
+    expiryISO: new Date(Number(m.expiry) * 1000).toISOString(),
+    tradingStartISO: new Date(Number(m.tradingStart) * 1000).toISOString(),
+    binaryPoolAddress: m.binaryPoolAddress,
+  };
+  console.log(`\nLIVE ${m.asset} marketAddress=${m.marketAddress} marketId=${m.marketId}`);
+  console.log("  indexer:", JSON.stringify(indexer));
+  try {
+    const rec = await client.readContract({ address: MODULE, abi: MODULE_ABI2, functionName: "markets", args: [m.marketId] });
+    const moduleInfo = {
+      market: rec.market,
+      pool: rec.pool,
+      expiry: Number(rec.expiry),
+      expiryISO: new Date(Number(rec.expiry) * 1000).toISOString(),
+      stale: Number(rec.expiry) < now2,
+      expiryMatchesIndexer: Math.abs(Number(rec.expiry) - Number(m.expiry)) < 120,
+    };
+    console.log("  module: ", JSON.stringify(moduleInfo));
+  } catch (e) {
+    console.log("  module read failed:", String(e?.message || e).slice(0, 120));
+  }
+  // Probe the indexer's binaryPoolAddress for IBinaryMarket-style views
+  if (m.binaryPoolAddress) {
+    try {
+      const code = await client.getCode({ address: m.binaryPoolAddress });
+      const probe = { hasCode: !!(code && code !== "0x") };
+      for (const fn of ["isResolved", "payoutNumerators", "expiry"]) {
+        try {
+          const v = await client.readContract({
+            address: m.binaryPoolAddress,
+            abi: [{ name: fn, type: "function", stateMutability: "view", inputs: [], outputs: [{ type: fn === "expiry" ? "uint64" : fn === "isResolved" ? "bool" : "uint256[]" }] }],
+            functionName: fn,
+          });
+          probe[fn] = fn === "payoutNumerators" ? v.map(String) : typeof v === "bigint" ? Number(v) : v;
+        } catch (e) {
+          probe[fn] = "reverted";
+        }
+      }
+      console.log("  binaryPoolAddress probe:", JSON.stringify(probe));
+    } catch (e) {
+      console.log("  binaryPoolAddress probe failed:", String(e?.message || e).slice(0, 120));
+    }
+  }
+}
+
+// ── 13. The reported duel's market: module vs indexer vs oracle ──
+console.log("\n#### SECTION 13: REPORTED DUEL MARKET SUMMARY");
+const duelMarketId = "0x0000000000000000000000000000000000000000000000000000000000003f13";
+try {
+  const rec = await client.readContract({ address: MODULE, abi: MODULE_ABI2, functionName: "markets", args: [duelMarketId] });
+  console.log("module record:", JSON.stringify({
+    market: rec.market, pool: rec.pool,
+    expiry: Number(rec.expiry), expiryISO: new Date(Number(rec.expiry) * 1000).toISOString(),
+  }, null, 2));
+} catch (e) {
+  console.log("module read failed:", String(e?.message || e).slice(0, 120));
+}
+// Oracle answers (final vs opening) — the ACTUAL resolution data
+const ansQ = `{
+  OracleAnswer(where: {oracleQuestionId: {_in: ["56312", "56301"]}}) { id numericValue outcomeIdx resolvedAt voided txHash }
+}`;
+const ansData = await gql("https://prd.smk.somnia.host/v1/graphql", ansQ);
+const answers = ansData?.data?.OracleAnswer ?? [];
+const final = answers.find((a) => a.oracleQuestionId !== undefined);
+console.log("oracle answers:", JSON.stringify(answers, null, 2));
+const finalAns = answers.find((a) => a.id === "56312");
+const openAns = answers.find((a) => a.id === "56301");
+if (finalAns && openAns) {
+  const finalCents = Number(finalAns.numericValue);
+  const openCents = Number(openAns.numericValue);
+  console.log("RESOLUTION MATH: final($", (finalCents / 100), ") vs opening($", (openCents / 100), ") →",
+    finalCents >= openCents ? "UP WON (final at or above opening)" : "DOWN WON (final below opening)");
+}
+

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { put } from "@vercel/blob";
-import { updateProfilePfp } from "@/lib/db";
+import { putPfp, deleteStalePfps, isValidEvmAddress, savePfpRecord } from "@/lib/pfpStore";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,6 +10,16 @@ export async function POST(req: NextRequest) {
     if (!file || !address) {
       return NextResponse.json(
         { error: "Missing file or address" },
+        { status: 400 }
+      );
+    }
+
+    // P3: the storage key is derived ONLY from a validated wallet address.
+    // Unvalidated addresses previously allowed bogus keys (e.g. "undefined")
+    // to be written and read back shared across wallets.
+    if (!isValidEvmAddress(address)) {
+      return NextResponse.json(
+        { error: "Invalid wallet address" },
         { status: 400 }
       );
     }
@@ -30,30 +39,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const addr = address.toLowerCase();
-    const ext = file.name.split(".").pop() || "jpg";
+    const result = await putPfp(address, file);
 
-    console.log(`PFP upload: ${addr}, type=${file.type}, size=${file.size}, ext=${ext}`);
+    console.log(`PFP upload: ${address.toLowerCase()} → ${result.pathname} (${file.size} bytes)`);
 
-    const blob = await put(`pfps/${addr}.${ext}`, file, {
-      access: "private",
-      contentType: file.type,
-      addRandomSuffix: false,
-      allowOverwrite: true,
-    });
+    // Remove any older blobs for this address under other extensions so reads
+    // always resolve to THIS upload, never a stale earlier format.
+    await deleteStalePfps(address, result.ext);
 
-    console.log(`PFP blob stored: ${blob.url}`);
-
-    const saved = await updateProfilePfp(addr, blob.url);
+    const saved = await savePfpRecord(address, result.url);
     if (!saved) {
-      console.error("PFP upload: DB save failed for", addr);
-      return NextResponse.json(
-        { error: "Failed to save profile" },
-        { status: 500 }
-      );
+      console.error("PFP upload: DB save failed for", address.toLowerCase());
+      // The blob itself is stored and per-address — the proxy read path works
+      // even if the DB write fails, so don't fail the upload.
     }
 
-    return NextResponse.json({ pfpUrl: blob.url });
+    return NextResponse.json({ pfpUrl: result.url, pathname: result.pathname });
   } catch (e: any) {
     console.error("PFP upload error:", e);
     return NextResponse.json(
