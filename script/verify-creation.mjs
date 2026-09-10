@@ -95,13 +95,16 @@ for (const [i, m] of picked.entries()) {
   if (!info || info.clobStatus !== "Trading") throw new Error(`market ${m.marketAddress} failed creation checks`);
   console.log("  creation checks: PASS (indexer row + Trading)");
 
-  // (2) create
+  // (2) create — deadline computed FRESH per market (the shared `now` goes
+  // stale after each ~96s reclaim wait; the factory rejects past deadlines,
+  // as it should)
+  const deadline = Math.floor(Date.now() / 1000) + 90;
   const createHash = await walletClient.sendTransaction({
     to: FACTORY,
     data: encodeFunctionData({
       abi: FACTORY_ABI,
       functionName: "createDuel",
-      args: [m.marketAddress, info.marketId, BigInt(now + 90), i % 2 === 1], // alternate DOWN/UP
+      args: [m.marketAddress, info.marketId, BigInt(deadline), i % 2 === 1], // alternate DOWN/UP
     }),
     value: STAKE,
     gas: 5_000_000n,
