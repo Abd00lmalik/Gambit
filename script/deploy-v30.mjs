@@ -87,7 +87,16 @@ const balance = await publicClient.getBalance({ address: account.address });
 console.log("deployer balance:", formatEther(balance), "STT");
 
 const data = encodeDeployData({ abi, bytecode, args: constructorArgs });
-const gas = 10_000_000n; // constructor deploys the Wager implementation inline
+// Constructor deploys the Wager implementation inline — needs a big budget.
+// Estimate first (also surfaces constructor revert reasons), then pad.
+let gas = 60_000_000n;
+try {
+  const est = await publicClient.estimateGas({ account, data });
+  console.log("estimated deploy gas:", est);
+  gas = est * 3n > 80_000_000n ? 80_000_000n : est * 3n;
+} catch (e) {
+  console.log("estimate failed (continuing with 60M):", String(e).slice(0, 500));
+}
 const txHash = await walletClient.sendTransaction({
   data,
   gas,
