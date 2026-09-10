@@ -309,7 +309,9 @@ export function useFactoryReads() {
 
 /**
  * Resolves the canonical Market contract address from a Wager's marketId.
- * Tries index 8 (market) first — if it has no code (Era 3), falls back to index 9 (pool).
+ * Returns BOTH the market (index 8) and pool (index 9) addresses from the
+ * BinaryMarketsModule record, plus the raw record for diagnostics.
+ * Polls every 10s so a page left open notices resolution without refresh.
  */
 export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
   const record = useReadContract({
@@ -317,17 +319,20 @@ export function useResolvedMarketAddress(marketId: `0x${string}` | undefined) {
     abi: BINARY_MARKETS_MODULE_ABI,
     functionName: "markets",
     args: marketId ? [marketId] : undefined,
-    query: { enabled: !!marketId },
+    query: { enabled: !!marketId, refetchInterval: 10_000 },
   });
 
-  const resolved = record.data as any;
-  const marketAddress = resolved?.[8] as Address | undefined;
-  const poolAddress = resolved?.[9] as Address | undefined;
+  const resolved = record.data as readonly unknown[] | undefined;
+  const isZeroAddr = (a: unknown): a is Address =>
+    typeof a === "string" && a !== "0x0000000000000000000000000000000000000000" && /^0x[0-9a-fA-F]{40}$/.test(a);
 
-  // For the hook consumer: prefer market address, but also expose pool as fallback
+  const marketAddress = isZeroAddr(resolved?.[8]) ? (resolved[8] as Address) : undefined;
+  const poolAddress = isZeroAddr(resolved?.[9]) ? (resolved[9] as Address) : undefined;
+
   return {
     resolvedMarketAddress: marketAddress,
-    poolAddress: poolAddress,
+    poolAddress,
+    error: record.error ?? null,
     isLoading: record.isLoading,
   };
 }
@@ -337,36 +342,141 @@ export function useMarketStatus(marketAddress: Address | undefined) {
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "status",
-    query: { enabled: !!marketAddress, refetchInterval: 10000 },
+    query: { enabled: !!marketAddress, refetchInterval: 10_000 },
   });
 
   const isResolved = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "isResolved",
-    query: { enabled: !!marketAddress, refetchInterval: 10000 },
+    query: { enabled: !!marketAddress, refetchInterval: 10_000 },
   });
 
   const isVoided = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "isVoided",
-    query: { enabled: !!marketAddress, refetchInterval: 10000 },
+    query: { enabled: !!marketAddress, refetchInterval: 10_000 },
   });
 
-  // Always query payoutNumerators when address is available — don't gate on isResolved
-  // This avoids the race where isResolved reverts (no code) and payoutNumerators never queries
+  // Always query payoutNumerators when address is available — don't gate on isResolved.
+  // payoutNumerators is empty until resolved, so it doubles as a resolution signal for
+  // contracts where isResolved() itself reverts (selector missing).
   const payoutNumerators = useReadContract({
     address: marketAddress,
     abi: DREAMDEX_ABI,
     functionName: "payoutNumerators",
-    query: { enabled: !!marketAddress, refetchInterval: 10000 },
+    query: { enabled: !!marketAddress, refetchInterval: 10_000 },
   });
+
+  // A candidate is "alive" when at least one of its reads returned data. Reverting
+  // reads (no code / wrong contract) leave every `data` undefined → alive=false,
+  // which is how we tell "not resolved yet" apart from "wrong address".
+  const alive =
+    !!marketAddress &&
+    (isResolved.data !== undefined ||
+      payoutNumerators.data !== undefined ||
+      status.data !== undefined);
 
   return {
     status: status.data !== undefined ? Number(status.data) : undefined,
     isResolved: isResolved.data ?? false,
     isVoided: isVoided.data ?? false,
-    payoutNumerators: payoutNumerators.data as bigint[] | undefined,
+    payoutNumerators: payoutNumerators.data as readonly bigint[] | undefined,
+    readError: isResolved.error ?? payoutNumerators.error ?? null,
+    addressAlive: alive,
+  };
+}
+
+/**
+ * Full on-chain resolution for a duel, mirroring Wager.settle()'s OWN logic so
+ * the UI and the contract can never disagree:
+ *
+ *   1. `resolvedMarketContract()` — the canonical IBinaryMarket address the Wager
+ *      stored at initialize() (exactly what settle() reads first).
+ *   2. BinaryMarketsModule `markets(marketId)[8]` (market).
+ *   3. BinaryMarketsModule `markets(marketId)[9]` (pool fallback — the "Era 3"
+ *      path where index 8 had no code; matches Wager._resolveMarketContract).
+ *
+ * A candidate whose isResolved()/payoutNumerators() revert is skipped silently.
+ */
+export function useDuelResolution(
+  duelAddress: Address | undefined,
+  marketId: `0x${string}` | undefined,
+) {
+  const stored = useReadContract({
+    address: duelAddress,
+    abi: WAGER_ABI,
+    functionName: "resolvedMarketContract",
+    query: { enabled: !!duelAddress, refetchInterval: 10_000 },
+  });
+  const { resolvedMarketAddress: moduleMarket, poolAddress: modulePool, error: moduleError } =
+    useResolvedMarketAddress(marketId);
+
+  const isUsable = (a: unknown): a is Address =>
+    typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a) &&
+    a !== "0x0000000000000000000000000000000000000000";
+
+  // De-dupe candidates (stored addr is usually identical to moduleMarket).
+  const storedAddr = isUsable(stored.data) ? (stored.data as Address) : undefined;
+  const seen = new Set<string>();
+  const candidates: { label: string; addr: Address }[] = [];
+  for (const c of [
+    { label: "wager.resolvedMarketContract", addr: storedAddr },
+    { label: "module.markets()[market]", addr: moduleMarket },
+    { label: "module.markets()[pool]", addr: modulePool },
+  ] as const) {
+    if (c.addr && isUsable(c.addr) && !seen.has(c.addr.toLowerCase())) {
+      seen.add(c.addr.toLowerCase());
+      candidates.push({ label: c.label, addr: c.addr });
+    }
+  }
+
+  // Fixed hook slots (hooks can't be called in a loop).
+  const s0 = useMarketStatus(candidates[0]?.addr);
+  const s1 = useMarketStatus(candidates[1]?.addr);
+  const s2 = useMarketStatus(candidates[2]?.addr);
+  const statuses = [s0, s1, s2].slice(0, candidates.length);
+
+  // "Resolved" per any candidate that answered — same test settle() applies:
+  // isResolved() true, or a non-zero payout vector present.
+  let resolvedStatus = null as null | (typeof statuses)[number];
+  let resolvedLabel: string | null = null;
+  for (let i = 0; i < statuses.length; i++) {
+    const s = statuses[i];
+    const payouts = s.payoutNumerators;
+    const hasPayout = !!payouts && payouts.length >= 2 && (payouts[0] > BigInt(0) || payouts[1] > BigInt(0));
+    if (s.isResolved || hasPayout) {
+      resolvedStatus = s;
+      resolvedLabel = candidates[i].label;
+      break;
+    }
+  }
+
+  const isVoided = resolvedStatus?.isVoided ?? statuses.some((s) => s.isVoided);
+
+  // Winner = argmax(payoutNumerators) — exactly as the markets SDK does
+  // (settlement v3 stores a payout VECTOR; there is no winningOutcome()).
+  let winnerSide: "up" | "down" | "tie" | null = null;
+  if (resolvedStatus?.payoutNumerators && resolvedStatus.payoutNumerators.length >= 2) {
+    const up = resolvedStatus.payoutNumerators[0] ?? BigInt(0);
+    const down = resolvedStatus.payoutNumerators[1] ?? BigInt(0);
+    if (up > BigInt(0) || down > BigInt(0)) winnerSide = up === down ? "tie" : up > down ? "up" : "down";
+  }
+
+  return {
+    // terminal = market reached a final state (resolved OR voided);
+    // isResolved additionally requires a winner vector (voided → refund path).
+    isTerminal: resolvedStatus !== null,
+    isResolved: resolvedStatus !== null && !isVoided,
+    isVoided,
+    winnerSide,
+    payoutNumerators: resolvedStatus?.payoutNumerators,
+    candidates,
+    // Which candidate answered resolved (null = none yet). Surfaced for debugging.
+    resolvedVia: resolvedLabel,
+    moduleError: moduleError ?? null,
+    storedReadError: stored.error ?? null,
+    anyCandidateAlive: statuses.some((s) => s.addressAlive),
   };
 }

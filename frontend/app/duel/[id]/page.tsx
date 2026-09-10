@@ -11,7 +11,8 @@ import PlayerAvatar from "@/components/PlayerAvatar";
 import CountdownTimer from "@/components/CountdownTimer";
 import MarketSentimentBar from "@/components/MarketSentimentBar";
 import OracleVerification from "@/components/OracleVerification";
-import { useDuelReads, useDuelActions, useMarketStatus, useResolvedMarketAddress } from "@/hooks/useContracts";
+import ResultPopup, { type ResultKind } from "@/components/ResultPopup";
+import { useDuelReads, useDuelActions, useDuelResolution } from "@/hooks/useContracts";
 import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
 import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { useLivePrices } from "@/hooks/useLivePrices";
@@ -45,14 +46,42 @@ export default function DuelPage({ params }: { params: { id: string } }) {
 
   const duel = useDuelReads(duelAddress);
   const prices = useLivePrices();
-  const { resolvedMarketAddress, poolAddress } = useResolvedMarketAddress(duel.marketId);
-  // Use resolved Market contract for on-chain IBinaryMarket reads (isResolved, status, etc.)
-  // NOT the raw CLOB listing address from duel.marketAddress, which may have no EVM code
-  const market = useMarketStatus(resolvedMarketAddress);
-  // Fallback: if market address has no code (Era 3), also check pool address
-  const poolMarket = useMarketStatus(!market.isResolved && !market.isVoided ? poolAddress : undefined);
+  // On-chain resolution mirrors Wager.settle()'s own market resolution:
+  // wager.resolvedMarketContract() → module markets(marketId)[8] → [9] (pool).
+  // The old code only tried the module re-derivation, so any mismatch between
+  // what the frontend guessed and what the contract stored silently pinned the
+  // page to "Waiting for DreamDEX market to resolve…" forever.
+  const resolution = useDuelResolution(duelAddress, duel.marketId);
+  // Terminal = market resolved OR voided (either unlocks a contract action).
+  const effectiveIsResolved = resolution.isTerminal;
+  const isVoided = resolution.isVoided;
   const actions = useDuelActions(duelAddress);
   const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
+
+  // Winner popup — fires once (per duel, per browser session) the moment the
+  // on-chain market resolution is detected while the duel is still LOCKED.
+  // Kept before the loading/not-found early returns so hook order is stable.
+  const popupKey = `gambit-result-shown-${duelAddress.toLowerCase()}`;
+  const [popupDismissed, setPopupDismissed] = useState(true);
+  useEffect(() => {
+    const ZERO = "0x0000000000000000000000000000000000000000";
+    const joined = !!duel.playerB && duel.playerB !== ZERO;
+    const mine =
+      !!connectedAddress &&
+      (duel.playerA?.toLowerCase() === connectedAddress.toLowerCase() ||
+        duel.playerB?.toLowerCase() === connectedAddress.toLowerCase());
+    const locked = (duel.state ?? -1) === DuelState.LOCKED;
+    if (!(joined && mine && locked && resolution.isTerminal)) return;
+    try {
+      if (sessionStorage.getItem(popupKey)) return;
+    } catch {}
+    setPopupDismissed(false);
+  }, [duel.playerA, duel.playerB, duel.state, connectedAddress, resolution.isTerminal, popupKey]);
+
+  const dismissPopup = () => {
+    try { sessionStorage.setItem(popupKey, "1"); } catch {}
+    setPopupDismissed(true);
+  };
 
   // Refetch duel data after join completes
   useEffect(() => {
@@ -60,16 +89,6 @@ export default function DuelPage({ params }: { params: { id: string } }) {
       duel.refetch();
     }
   }, [actions.joinStep, duel.refetch]);
-
-  // Determine effective market resolution (market or pool fallback)
-  // Also use payoutNumerators as a secondary indicator — if payouts exist, market is resolved
-  const marketHasPayouts = !!(market.payoutNumerators && market.payoutNumerators.length >= 2 &&
-    (Number(market.payoutNumerators[0]) > 0 || Number(market.payoutNumerators[1]) > 0));
-  const poolHasPayouts = !!(poolMarket.payoutNumerators && poolMarket.payoutNumerators.length >= 2 &&
-    (Number(poolMarket.payoutNumerators[0]) > 0 || Number(poolMarket.payoutNumerators[1]) > 0));
-  const effectiveIsResolved = (market.isResolved ?? false) || (poolMarket.isResolved ?? false) || marketHasPayouts || poolHasPayouts;
-  // Use whichever market resolved for payout check
-  const effectivePayouts = market.payoutNumerators ?? poolMarket.payoutNumerators;
 
   // Fetch market data from DreamDEX indexer (reuses Create Duel logic)
   useEffect(() => {
@@ -123,20 +142,20 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const isJoiner = connectedAddress?.toLowerCase() === duel.playerB?.toLowerCase();
   const hasJoined = !!duel.playerB && duel.playerB !== "0x0000000000000000000000000000000000000000";
 
-  // Determine winner: payoutNumerators[0] = Up/Yes (player A wins), [1] = Down/No (player B wins)
-  const isWinner = (() => {
-    if (!effectiveIsResolved || !effectivePayouts || effectivePayouts.length < 2) return false;
-    const upWins = Number(effectivePayouts[0]) > 0;
-    const downWins = Number(effectivePayouts[1]) > 0;
-    if (upWins) return isCreator;
-    if (downWins) return isJoiner;
-    return false;
-  })();
+  // Winner = argmax(payoutNumerators) — settlement v3 stores a payout vector on the
+  // market (no single winnerOutcome getter); [0]=Up/YES → player A, [1]=Down/NO → player B.
+  // "tie" (both numerators equal & non-zero) → the contract auto-refunds on settle().
+  const winnerSide = resolution.winnerSide; // "up" | "down" | "tie" | null
+  const isWinner = effectiveIsResolved && ((winnerSide === "up" && isCreator) || (winnerSide === "down" && isJoiner));
+  const isLoser = effectiveIsResolved && hasJoined && !isVoided && !isWinner &&
+    (winnerSide === "up" ? isJoiner : winnerSide === "down" ? isCreator : false);
+  const isParticipant = hasJoined && (isCreator || isJoiner);
+  const resultKind: ResultKind = isVoided || winnerSide === "tie" ? "void" : isWinner ? "won" : "lost";
 
   // P1: Detect stuck duels — CREATED state, deadline passed, market resolved
   // The reactive auto-refund should have fired but didn't (subscription missing or callback reverted)
   const deadlinePassed = !!duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
-  const isStuck = state === DuelState.CREATED && deadlinePassed && market.isResolved;
+  const isStuck = state === DuelState.CREATED && deadlinePassed && effectiveIsResolved;
 
   // Creator refund: nobody joined, market resolved (even before deadline)
   // Uses factory.cancelDuel() which is permissionless and works before deadline if market resolved
@@ -389,8 +408,27 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </div>
           )}
 
+          {/* Market voided — both stakes refund (contract's refund() path) */}
+          {hasJoined && state === DuelState.LOCKED && isVoided && (
+            <button
+              disabled={actions.isPending || isChecking}
+              onClick={async () => {
+                try {
+                  if (!isCorrectNetwork) {
+                    await ensureCorrectNetwork();
+                    return;
+                  }
+                  await actions.refundDuel();
+                } catch {}
+              }}
+              className="min-h-[52px] w-full rounded-xl bg-yellow-400 py-3 font-display text-base font-bold text-carbon transition-all hover:bg-yellow-400/80 active:scale-[0.97] disabled:opacity-70"
+            >
+              {actions.isPending ? "Refunding..." : "Refund Stakes →"}
+            </button>
+          )}
+
           {/* Market resolved but not the winner or can't determine winner — show settle for anyone (permissionless) */}
-          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isWinner && (
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isVoided && !isWinner && (
             <button
               disabled={actions.isPending || isChecking}
               onClick={async () => {
@@ -547,7 +585,20 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           {/* Waiting for resolution */}
           {hasJoined && state === DuelState.LOCKED && !effectiveIsResolved && (
             <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-4 text-center">
-              <p className="font-body text-sm text-yellow-400">Waiting for DreamDEX market to resolve...</p>
+              <p className="font-body text-sm text-yellow-400">
+                {resolution.candidates.length === 0
+                  ? "Locating market contract on-chain…"
+                  : resolution.anyCandidateAlive
+                    ? "Waiting for DreamDEX market to resolve…"
+                    : "Market contract unreachable — no readable address found for this market yet."}
+              </p>
+              {process.env.NODE_ENV !== "production" && (
+                <p className="font-mono text-[10px] text-gray-500 mt-2">
+                  candidates: {resolution.candidates.map((c) => c.label).join(" | ") || "none"}
+                  {resolution.moduleError ? ` · module: ${String((resolution.moduleError as Error)?.message || "").slice(0, 80)}` : ""}
+                  {resolution.storedReadError ? ` · stored: ${String((resolution.storedReadError as Error)?.message || "").slice(0, 80)}` : ""}
+                </p>
+              )}
             </div>
           )}
 
@@ -584,6 +635,25 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           </div>
         </motion.div>
       </div>
+
+      {/* Result popup — appears once when on-chain resolution is first detected */}
+      <ResultPopup
+        show={!popupDismissed && isParticipant && state === DuelState.LOCKED && effectiveIsResolved}
+        kind={resultKind}
+        pot={duel.pot}
+        onDismiss={dismissPopup}
+        onClaim={resultKind === "won" ? async () => {
+          try {
+            if (!isCorrectNetwork) {
+              await ensureCorrectNetwork();
+              return;
+            }
+            await actions.settleDuel();
+            dismissPopup();
+          } catch {}
+        } : undefined}
+        claiming={actions.isPending}
+      />
     </div>
   );
 }
