@@ -105,7 +105,7 @@ jobs:
               if (bal < 2000000000000000000n) { console.log("::error::deployer needs >= 2 STT gas"); process.exit(1); }
             });'
       - name: Deploy V30 (side support + hardened settle) + on-chain smoke
-        run: node script/deploy-v30.mjs 2>&1 | tee deploy-v30.log
+        run: set -o pipefail; node script/deploy-v30.mjs 2>&1 | tee deploy-v30.log
       - name: Redact smoke log (strip tx hashes + private details)
         run: sed -E 's/0x[0-9a-f]{64}/<txhash>/g' deploy-v30.log > deploy-v30.redacted.log && mv deploy-v30.redacted.log deploy-v30.log
       - name: Commit deploy log via Contents API
@@ -122,34 +122,3 @@ jobs:
             payload=$(jq -n --arg msg "ci: deploy log [skip ci]" --arg b "$b64" '{message:$msg, content:$b, branch:"${{ github.ref_name }}"}')
           fi
           gh api -X PUT "repos/${{ github.repository }}/contents/deploy-v30.log" --input - <<< "$payload" > /dev/null && echo "committed deploy-v30.log"
-      - name: Smoke-test the new factory on-chain
-        run: |
-          node -e '
-            import("viem").then(async ({ createPublicClient, http }) => {
-              const c = createPublicClient({ transport: http(process.env.RPC) });
-              const log = require("fs").readFileSync("deploy-v30.log", "utf8");
-              const factoryMatch = log.match(/Factory:\s+(0x[0-9a-fA-F]{40})/);
-              const implMatch = log.match(/Implementation:\s+(0x[0-9a-fA-F]{40})/);
-              if (!factoryMatch || !implMatch) { console.log("::error::could not parse deployed addresses"); process.exit(1); }
-              const FACTORY = factoryMatch[1]; const IMPL = implMatch[1];
-              console.log("smoke:", { FACTORY, IMPL });
-              const factoryAbi = [
-                { name: "implementation", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-                { name: "feeRecipient", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-                { name: "defaultFeeBps", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
-              ];
-              const impl = await c.readContract({ address: FACTORY, abi: factoryAbi, functionName: "implementation" });
-              const fee = await c.readContract({ address: FACTORY, abi: factoryAbi, functionName: "defaultFeeBps" });
-              if (impl.toLowerCase() !== IMPL.toLowerCase()) { console.log("::error::implementation mismatch"); process.exit(1); }
-              if (Number(fee) !== 250) { console.log("::error::fee mismatch"); process.exit(1); }
-              const wagerAbi = [
-                { name: "creatorIsUp", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
-              ];
-              try {
-                await c.readContract({ address: IMPL, abi: wagerAbi, functionName: "creatorIsUp" });
-              } catch (e) {
-                // expect false (default) rather than revert — revert means the selector is missing
-                if (String(e).includes("reverted") && !String(e).includes("execution reverted")) { throw e; }
-              }
-              console.log("✓ factory live, implementation verified, creatorIsUp selector present");
-            });'

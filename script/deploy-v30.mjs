@@ -30,17 +30,24 @@ function compileFactory() {
   };
   addFile(path.join(ROOT, "contracts/GambitFactory.sol"), "contracts/GambitFactory.sol");
   while (queue.length) {
-    const [key, abs] = queue.shift();
+    const [file, abs] = queue.shift();
     const re = /import\s+(?:[^;'"]*?"([^"]+)"|'([^']+)')\s*;/g;
     let m;
-    while ((m = re.exec(sources[key].content))) {
+    while ((m = re.exec(sources[file].content))) {
       const spec = m[1] || m[2];
       let resolved;
-      if (spec.startsWith("@openzeppelin/")) resolved = path.join(ROOT, "node_modules", spec);
-      else if (spec.startsWith(".")) resolved = path.resolve(path.dirname(abs), spec);
-      else throw new Error("unexpected import " + spec);
-      const importKey = spec;
-      if (!sources[importKey]) addFile(resolved, importKey);
+      let importKey;
+      if (spec.startsWith("@openzeppelin/")) {
+        resolved = path.join(ROOT, "node_modules", spec);
+        importKey = spec;
+      } else if (spec.startsWith(".")) {
+        resolved = path.resolve(path.dirname(abs), spec);
+        importKey = path.posix.normalize(path.posix.join(path.posix.dirname(file), spec));
+      } else throw new Error("unexpected import " + spec);
+      if (!sources[importKey]) {
+        if (!fs.existsSync(resolved)) throw new Error(`missing ${spec} -> ${resolved}`);
+        addFile(resolved, importKey);
+      }
     }
   }
   const input = {
