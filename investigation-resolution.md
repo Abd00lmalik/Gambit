@@ -203,23 +203,13 @@ block timestamp fetch failed: Unexpected token '<', "<html>
 #### SECTION 10: PRICE FEED — OPENING (10:15Z) vs EXPIRY (10:30Z) on 2026-09-10
 t=1789035300 (2026-09-10T10:15:00.000Z): [{"t":"2026-09-10T10:14:55.000Z","spotUsd":77970.84999999999},{"t":"2026-09-10T10:14:56.000Z","spotUsd":77970.805},{"t":"2026-09-10T10:14:57.000Z","spotUsd":77970.2}]
 t=1789036200 (2026-09-10T10:30:00.000Z): [{"t":"2026-09-10T10:29:55.000Z","spotUsd":77963.8325},{"t":"2026-09-10T10:29:56.000Z","spotUsd":77963.8325},{"t":"2026-09-10T10:29:57.000Z","spotUsd":77962.74999999999}]
-latest BTC/USDC: [{"spot":"77015075000000000000000","blockTimestamp":"1789045557"}]
+latest BTC/USDC: [{"spot":"77000860000000000000000","blockTimestamp":"1789045835"}]
 #### SECTION 11: ORACLE QUESTION DETAILS
 Question fields: undefined
 OracleQuestion fields: ["bindCount","binds","createdAtBlock","createdAtTimestamp","id","oracleCost","oracleQuestionId","payoutDenominator","payoutNumerators","questionKey","resolvedAt","resolvedAtBlock","reuseCount","scheduler","supersededByQuestionId","voided"]
 #### DEEP DIVE COMPLETE
 #### SECTION 12: MODULE RECORD vs INDEXER EXPIRY (staleness pattern)
 found 4 live markets
-
-LIVE BTC marketAddress=0xb535e1b9771aebad4bcb6214ccd0c35846a53cdb marketId=0x0000000000000000000000000000000000000000000000000000000000003f75
-  indexer: {"marketAddress":"0xb535e1b9771aebad4bcb6214ccd0c35846a53cdb","expiry":1789045800,"expiryISO":"2026-09-10T13:10:00.000Z","tradingStartISO":"2026-09-10T13:05:00.000Z","binaryPoolAddress":"0x363deb12f640de39b0575d158325dad098ba0d02"}
-  module:  {"market":"0x47B9d08aD210c48CB5a34D94Da9748D52a227fa2","pool":"0x2E70ff399C771A7aF71948c550684343021e829D","expiry":1786502700,"expiryISO":"2026-08-12T02:45:00.000Z","stale":true,"expiryMatchesIndexer":false}
-  binaryPoolAddress probe: {"hasCode":true,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
-
-LIVE ETH marketAddress=0x79ed58b8a29eb73d80fd03bcd58a9c8942ad6b69 marketId=0x0000000000000000000000000000000000000000000000000000000000003f76
-  indexer: {"marketAddress":"0x79ed58b8a29eb73d80fd03bcd58a9c8942ad6b69","expiry":1789045800,"expiryISO":"2026-09-10T13:10:00.000Z","tradingStartISO":"2026-09-10T13:05:00.000Z","binaryPoolAddress":"0xc99109a3d4fe89a4b8f81b0f8d7efb595c6da4e5"}
-  module:  {"market":"0x24c2a4092d2827E5e2b93Ac9bcc3439Ae9C9E804","pool":"0xa6899DA2a4f43defe2dFbCa25e94a601AEB79848","expiry":1786503600,"expiryISO":"2026-08-12T03:00:00.000Z","stale":true,"expiryMatchesIndexer":false}
-  binaryPoolAddress probe: {"hasCode":false,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
 
 LIVE BTC marketAddress=0x6b54e9e8748e13c0c1a01391a23b69cff470f714 marketId=0x0000000000000000000000000000000000000000000000000000000000003f71
   indexer: {"marketAddress":"0x6b54e9e8748e13c0c1a01391a23b69cff470f714","expiry":1789046100,"expiryISO":"2026-09-10T13:15:00.000Z","tradingStartISO":"2026-09-10T13:00:00.000Z","binaryPoolAddress":"0xa475e7cff65bd47c3a0783d071e7075e035048a8"}
@@ -229,6 +219,16 @@ LIVE BTC marketAddress=0x6b54e9e8748e13c0c1a01391a23b69cff470f714 marketId=0x000
 LIVE ETH marketAddress=0x823141301b91fada2f94c91873f9fae5b11f53c9 marketId=0x0000000000000000000000000000000000000000000000000000000000003f72
   indexer: {"marketAddress":"0x823141301b91fada2f94c91873f9fae5b11f53c9","expiry":1789046100,"expiryISO":"2026-09-10T13:15:00.000Z","tradingStartISO":"2026-09-10T13:00:00.000Z","binaryPoolAddress":"0x4909d1d4487fd2da18cc4af698673b06562d3931"}
   module:  {"market":"0x1e5EDd5E758D1D44B9aAf3D8f25168CA83EB3E7a","pool":"0x2E4Acbd037D5dF1986137797fa94904043542327","expiry":1786501800,"expiryISO":"2026-08-12T02:30:00.000Z","stale":true,"expiryMatchesIndexer":false}
+  binaryPoolAddress probe: {"hasCode":false,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
+
+LIVE BTC marketAddress=0x5b6e938bc4416e77f99ec787aaa4243929fcbaba marketId=0x0000000000000000000000000000000000000000000000000000000000003f77
+  indexer: {"marketAddress":"0x5b6e938bc4416e77f99ec787aaa4243929fcbaba","expiry":1789046100,"expiryISO":"2026-09-10T13:15:00.000Z","tradingStartISO":"2026-09-10T13:10:00.000Z","binaryPoolAddress":"0xf7bb8f1fd5afbae4432cbde4abda70b53a37bd61"}
+  module:  {"market":"0x47351cb78bC2746309579b4320f21cf205443405","pool":"0x32c2B68c4eE7d5e906752EF7D3BDcaC0cDbA29B1","expiry":1786503600,"expiryISO":"2026-08-12T03:00:00.000Z","stale":true,"expiryMatchesIndexer":false}
+  binaryPoolAddress probe: {"hasCode":false,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
+
+LIVE ETH marketAddress=0x7df612eb6659ad74a174db9b3645979fb726ae6e marketId=0x0000000000000000000000000000000000000000000000000000000000003f78
+  indexer: {"marketAddress":"0x7df612eb6659ad74a174db9b3645979fb726ae6e","expiry":1789046100,"expiryISO":"2026-09-10T13:15:00.000Z","tradingStartISO":"2026-09-10T13:10:00.000Z","binaryPoolAddress":"0x87ae2ee54d88ee1950b8756b3172054b85594d42"}
+  module:  {"market":"0x12A9410b477D136c9A7926b726B7f7A3A9e1f5d7","pool":"0x2933B0C7516fe19f1C074398a75C5E2CcF230a34","expiry":1786507200,"expiryISO":"2026-08-12T04:00:00.000Z","stale":true,"expiryMatchesIndexer":false}
   binaryPoolAddress probe: {"hasCode":false,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
 
 #### SECTION 13: REPORTED DUEL MARKET SUMMARY
