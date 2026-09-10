@@ -1,0 +1,258 @@
+Compiling 37 files with Solc 0.8.28
+Solc 0.8.28 finished in 2.54s
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+   --> test/ParimutuelPool.t.sol:160:9:
+    |
+160 |         uint256 bobBalanceBefore = bob.balance;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to view
+   --> test/ParimutuelPool.t.sol:344:5:
+    |
+344 |     function test_emptyPoolSplit() public {
+    |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  --> test/WagerPrematureSettlement.t.sol:28:5:
+   |
+28 |     function isResolved() external view returns (bool) { return true; } // lies pre-expiry
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  --> test/WagerPrematureSettlement.t.sol:29:5:
+   |
+29 |     function isVoided() external view returns (bool) { return false; }
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+Ran 5 tests for test/WagerPrematureSettlement.t.sol:WagerPrematureSettlementTest
+[PASS] test_settle_currentRecord_settlesAfterExpiry() (gas: 803420)
+[FAIL: panic: arithmetic underflow or overflow (0x11)] test_settle_revertsOnStaleModuleRecord() (gas: 283)
+Traces:
+  [283] WagerPrematureSettlementTest::test_settle_revertsOnStaleModuleRecord()
+    └─ ← [Revert] panic: arithmetic underflow or overflow (0x11)
+
+Backtrace:
+  at WagerPrematureSettlementTest.test_settle_revertsOnStaleModuleRecord
+
+[FAIL: next call did not revert as expected] test_settle_revertsWhileMarketStillTrading() (gas: 751785)
+Traces:
+  [751785] WagerPrematureSettlementTest::test_settle_revertsWhileMarketStillTrading()
+    ├─ [91484] MockBinaryMarketsModule::setRecord(0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3, LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], 0x0000000000000000000000000000000000000000, 1801)
+    │   └─ ← [Stop]
+    ├─ [0] VM::deal(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::prank(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6])
+    │   └─ ← [Return]
+    ├─ [366678] GambitFactory::createDuel{value: 1000000000000000000}(LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], 0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3, 301, true)
+    │   ├─ [22854] 0x3ecC694Cef705358864a646142ac17A90E29e388::markets(0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3) [staticcall]
+    │   │   └─ ← [Return] MarketRecord({ oracleQuestionId: 0, outcomeSlotCount: 0, voidPolicy: 0, collateral: 0x0000000000000000000000000000000000000000, originOperatorId: 0, originVenueId: 0x0000000000000000000000000000000000000000000000000000000000000000, oracleAdapter: 0x0000000000000000000000000000000000000000, creator: 0x0000000000000000000000000000000000000000, market: 0x0000000000000000000000000000000000000000, pool: 0x0000000000000000000000000000000000000000, yesId: 0, noId: 0, tradingStart: 0, expiry: 0 })
+    │   ├─ [9031] → new <unknown>@0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9
+    │   │   └─ ← [Return] 45 bytes of code
+    │   ├─ [234194] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::initialize(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], 1000000000000000000 [1e18], LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], 0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3, 250, feeRecipient: [0xa32c0203D5F9Fcfe1b2A359e5628cb5a22001bA7], 301, true)
+    │   │   ├─ [231483] Wager::initialize(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], 1000000000000000000 [1e18], LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], 0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3, 250, feeRecipient: [0xa32c0203D5F9Fcfe1b2A359e5628cb5a22001bA7], 301, true) [delegatecall]
+    │   │   │   ├─ [2854] 0x3ecC694Cef705358864a646142ac17A90E29e388::markets(0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3) [staticcall]
+    │   │   │   │   └─ ← [Return] MarketRecord({ oracleQuestionId: 0, outcomeSlotCount: 0, voidPolicy: 0, collateral: 0x0000000000000000000000000000000000000000, originOperatorId: 0, originVenueId: 0x0000000000000000000000000000000000000000000000000000000000000000, oracleAdapter: 0x0000000000000000000000000000000000000000, creator: 0x0000000000000000000000000000000000000000, market: 0x0000000000000000000000000000000000000000, pool: 0x0000000000000000000000000000000000000000, yesId: 0, noId: 0, tradingStart: 0, expiry: 0 })
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Return]
+    │   ├─ [23379] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::recordDeposit{value: 1000000000000000000}(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6])
+    │   │   ├─ [23210] Wager::recordDeposit{value: 1000000000000000000}(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6]) [delegatecall]
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Return]
+    │   ├─ emit DuelCreated(clone: 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9, playerA: alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], stakeAmount: 1000000000000000000 [1e18], marketAddress: LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], joinDeadline: 301, creatorIsUp: true)
+    │   └─ ← [Return] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9
+    ├─ [0] VM::deal(bob: [0x1D96F2f6BeF1202E4Ce1Ff6Dad0c2CB002861d3e], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::prank(bob: [0x1D96F2f6BeF1202E4Ce1Ff6Dad0c2CB002861d3e])
+    │   └─ ← [Return]
+    ├─ [48356] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::receive{value: 1000000000000000000}()
+    │   ├─ [24699] Wager::receive{value: 1000000000000000000}() [delegatecall]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Return]
+    ├─ [0] VM::prank(bob: [0x1D96F2f6BeF1202E4Ce1Ff6Dad0c2CB002861d3e])
+    │   └─ ← [Return]
+    ├─ [77140] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::join()
+    │   ├─ [53413] Wager::join() [delegatecall]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Return]
+    ├─ [264] LyingMockMarket::isResolved() [staticcall]
+    │   └─ ← [Return] true
+    ├─ [0] VM::expectRevert(market not final)
+    │   └─ ← [Return]
+    ├─ [123037] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::settle()
+    │   ├─ [99310] Wager::settle() [delegatecall]
+    │   │   ├─ [264] LyingMockMarket::isResolved() [staticcall]
+    │   │   │   └─ ← [Return] true
+    │   │   ├─ [231] LyingMockMarket::isVoided() [staticcall]
+    │   │   │   └─ ← [Return] false
+    │   │   ├─ [22854] 0x3ecC694Cef705358864a646142ac17A90E29e388::markets(0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3) [staticcall]
+    │   │   │   └─ ← [Return] MarketRecord({ oracleQuestionId: 0, outcomeSlotCount: 0, voidPolicy: 0, collateral: 0x0000000000000000000000000000000000000000, originOperatorId: 0, originVenueId: 0x0000000000000000000000000000000000000000000000000000000000000000, oracleAdapter: 0x0000000000000000000000000000000000000000, creator: 0x0000000000000000000000000000000000000000, market: 0x0000000000000000000000000000000000000000, pool: 0x0000000000000000000000000000000000000000, yesId: 0, noId: 0, tradingStart: 0, expiry: 0 })
+    │   │   ├─ [7189] LyingMockMarket::payoutNumerators() [staticcall]
+    │   │   │   └─ ← [Return] [10000000 [1e7], 0]
+    │   │   ├─ [0] feeRecipient::receive{value: 50000000000000000}()
+    │   │   │   └─ ← [Stop]
+    │   │   ├─ [0] alice::receive{value: 1950000000000000000}()
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Return]
+    └─ ← [Revert] next call did not revert as expected
+
+Backtrace:
+  at WagerPrematureSettlementTest.test_settle_revertsWhileMarketStillTrading
+
+[FAIL: next call did not revert as expected] test_settle_succeedsAfterExpiryWithRealPayouts() (gas: 814810)
+Traces:
+  [814810] WagerPrematureSettlementTest::test_settle_succeedsAfterExpiryWithRealPayouts()
+    ├─ [91484] MockBinaryMarketsModule::setRecord(0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3, LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], 0x0000000000000000000000000000000000000000, 601)
+    │   └─ ← [Stop]
+    ├─ [0] VM::deal(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::prank(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6])
+    │   └─ ← [Return]
+    ├─ [366678] GambitFactory::createDuel{value: 1000000000000000000}(LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], 0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3, 301, true)
+    │   ├─ [22854] 0x3ecC694Cef705358864a646142ac17A90E29e388::markets(0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3) [staticcall]
+    │   │   └─ ← [Return] MarketRecord({ oracleQuestionId: 0, outcomeSlotCount: 0, voidPolicy: 0, collateral: 0x0000000000000000000000000000000000000000, originOperatorId: 0, originVenueId: 0x0000000000000000000000000000000000000000000000000000000000000000, oracleAdapter: 0x0000000000000000000000000000000000000000, creator: 0x0000000000000000000000000000000000000000, market: 0x0000000000000000000000000000000000000000, pool: 0x0000000000000000000000000000000000000000, yesId: 0, noId: 0, tradingStart: 0, expiry: 0 })
+    │   ├─ [9031] → new <unknown>@0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9
+    │   │   └─ ← [Return] 45 bytes of code
+    │   ├─ [234194] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::initialize(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], 1000000000000000000 [1e18], LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], 0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3, 250, feeRecipient: [0xa32c0203D5F9Fcfe1b2A359e5628cb5a22001bA7], 301, true)
+    │   │   ├─ [231483] Wager::initialize(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], 1000000000000000000 [1e18], LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], 0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3, 250, feeRecipient: [0xa32c0203D5F9Fcfe1b2A359e5628cb5a22001bA7], 301, true) [delegatecall]
+    │   │   │   ├─ [2854] 0x3ecC694Cef705358864a646142ac17A90E29e388::markets(0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3) [staticcall]
+    │   │   │   │   └─ ← [Return] MarketRecord({ oracleQuestionId: 0, outcomeSlotCount: 0, voidPolicy: 0, collateral: 0x0000000000000000000000000000000000000000, originOperatorId: 0, originVenueId: 0x0000000000000000000000000000000000000000000000000000000000000000, oracleAdapter: 0x0000000000000000000000000000000000000000, creator: 0x0000000000000000000000000000000000000000, market: 0x0000000000000000000000000000000000000000, pool: 0x0000000000000000000000000000000000000000, yesId: 0, noId: 0, tradingStart: 0, expiry: 0 })
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Return]
+    │   ├─ [23379] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::recordDeposit{value: 1000000000000000000}(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6])
+    │   │   ├─ [23210] Wager::recordDeposit{value: 1000000000000000000}(alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6]) [delegatecall]
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Return]
+    │   ├─ emit DuelCreated(clone: 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9, playerA: alice: [0x328809Bc894f92807417D2dAD6b7C998c1aFdac6], stakeAmount: 1000000000000000000 [1e18], marketAddress: LyingMockMarket: [0x2e234DAe75C793f67A35089C9d99245E1C58470b], joinDeadline: 301, creatorIsUp: true)
+    │   └─ ← [Return] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9
+    ├─ [0] VM::deal(bob: [0x1D96F2f6BeF1202E4Ce1Ff6Dad0c2CB002861d3e], 1000000000000000000 [1e18])
+    │   └─ ← [Return]
+    ├─ [0] VM::prank(bob: [0x1D96F2f6BeF1202E4Ce1Ff6Dad0c2CB002861d3e])
+    │   └─ ← [Return]
+    ├─ [48356] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::receive{value: 1000000000000000000}()
+    │   ├─ [24699] Wager::receive{value: 1000000000000000000}() [delegatecall]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Return]
+    ├─ [0] VM::prank(bob: [0x1D96F2f6BeF1202E4Ce1Ff6Dad0c2CB002861d3e])
+    │   └─ ← [Return]
+    ├─ [77140] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::join()
+    │   ├─ [53413] Wager::join() [delegatecall]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Return]
+    ├─ [68436] LyingMockMarket::genuinelyResolve(0, 10000000 [1e7])
+    │   └─ ← [Stop]
+    ├─ [0] VM::expectRevert(market not final)
+    │   └─ ← [Return]
+    ├─ [123110] 0xCB6f5076b5bbae81D7643BfBf57897E8E3FB1db9::settle()
+    │   ├─ [99383] Wager::settle() [delegatecall]
+    │   │   ├─ [264] LyingMockMarket::isResolved() [staticcall]
+    │   │   │   └─ ← [Return] true
+    │   │   ├─ [231] LyingMockMarket::isVoided() [staticcall]
+    │   │   │   └─ ← [Return] false
+    │   │   ├─ [22854] 0x3ecC694Cef705358864a646142ac17A90E29e388::markets(0x29c5e4c283e3573822b11b6dc9f3d22b3f5ea23ca19f203b3a334b3d279ff8e3) [staticcall]
+    │   │   │   └─ ← [Return] MarketRecord({ oracleQuestionId: 0, outcomeSlotCount: 0, voidPolicy: 0, collateral: 0x0000000000000000000000000000000000000000, originOperatorId: 0, originVenueId: 0x0000000000000000000000000000000000000000000000000000000000000000, oracleAdapter: 0x0000000000000000000000000000000000000000, creator: 0x0000000000000000000000000000000000000000, market: 0x0000000000000000000000000000000000000000, pool: 0x0000000000000000000000000000000000000000, yesId: 0, noId: 0, tradingStart: 0, expiry: 0 })
+    │   │   ├─ [7189] LyingMockMarket::payoutNumerators() [staticcall]
+    │   │   │   └─ ← [Return] [0, 10000000 [1e7]]
+    │   │   ├─ [0] feeRecipient::receive{value: 50000000000000000}()
+    │   │   │   └─ ← [Stop]
+    │   │   ├─ [0] bob::receive{value: 1950000000000000000}()
+    │   │   │   └─ ← [Stop]
+    │   │   └─ ← [Stop]
+    │   └─ ← [Return]
+    └─ ← [Revert] next call did not revert as expected
+
+Backtrace:
+  at WagerPrematureSettlementTest.test_settle_succeedsAfterExpiryWithRealPayouts
+
+[PASS] test_settle_zeroExpirySkipsGuard() (gas: 651720)
+Suite result: FAILED. 2 passed; 3 failed; 0 skipped; finished in 2.79ms (1.80ms CPU time)
+
+Ran 17 tests for test/ParimutuelPool.t.sol:ParimutuelPoolTest
+[PASS] test_claimRefund() (gas: 349523)
+[PASS] test_claim_downWins() (gas: 482601)
+[PASS] test_claim_proportionalPayout() (gas: 482603)
+[PASS] test_claim_upWins() (gas: 482840)
+[PASS] test_depositDown() (gas: 132433)
+[PASS] test_depositUp() (gas: 142474)
+[PASS] test_emptyPoolSplit() (gas: 10517)
+[PASS] test_multipleDeposits() (gas: 302277)
+[PASS] test_multipleUpDeposits() (gas: 275111)
+[PASS] test_poolSplit() (gas: 212900)
+[PASS] test_refund_voidedMarket() (gas: 322703)
+[PASS] test_resolve_upWins() (gas: 373311)
+[PASS] test_revertsIfAlreadyClaimed() (gas: 511870)
+[PASS] test_revertsIfDeadlinePassed() (gas: 46815)
+[PASS] test_revertsIfNoDepositOnWinningSide() (gas: 410499)
+[PASS] test_revertsIfNotResolved() (gas: 141677)
+[PASS] test_revertsIfZeroDeposit() (gas: 39530)
+Suite result: ok. 17 passed; 0 failed; 0 skipped; finished in 12.48ms (8.86ms CPU time)
+
+Ran 35 tests for test/Wager.t.sol:GambitTest
+[PASS] test_cancel_revertsBeforeDeadline() (gas: 388392)
+[PASS] test_cancel_revertsIfDoubleCancel() (gas: 440865)
+[PASS] test_cancel_revertsIfJoined() (gas: 521005)
+[PASS] test_cancel_revertsIfNotOwner() (gas: 388657)
+[PASS] test_cancel_timeout() (gas: 423798)
+[PASS] test_factoryCancel_marketResolvedBeforeDeadline() (gas: 438093)
+[PASS] test_factoryCancel_revertsIfNotResolvedAndDeadlineNotPassed() (gas: 399656)
+[PASS] test_factory_cancel_refundsPlayerA() (gas: 421027)
+[PASS] test_factory_feeCap() (gas: 6588)
+[PASS] test_factory_maxStake() (gas: 47536)
+[PASS] test_factory_minStake() (gas: 45370)
+[PASS] test_feeMath_exactCalculation() (gas: 575057)
+[PASS] test_feeMath_highFee() (gas: 572812)
+[PASS] test_feeMath_rounding() (gas: 572795)
+[PASS] test_getPot() (gas: 424284)
+[PASS] test_happyPath_noWins() (gas: 572940)
+[PASS] test_happyPath_yesWins() (gas: 636840)
+[PASS] test_join_revertsDeadlinePassed() (gas: 445131)
+[PASS] test_join_revertsIfAlreadyJoined() (gas: 520642)
+[PASS] test_join_revertsInsufficientDeposit() (gas: 453370)
+[PASS] test_join_revertsSelfDuel() (gas: 390522)
+[PASS] test_overpayment_exactAmountAllowed() (gas: 492961)
+[PASS] test_overpayment_revertsInReceive() (gas: 395031)
+[PASS] test_overpayment_revertsMultipleDeposits() (gas: 450965)
+[PASS] test_refund_revertsIfNotVoided() (gas: 527318)
+[PASS] test_refund_voidedMarket() (gas: 560197)
+[PASS] test_settle_revertsIfNoPayoutSet() (gas: 543173)
+[PASS] test_settle_revertsIfNotResolved() (gas: 527462)
+[PASS] test_settle_splitMarket() (gas: 998287)
+[PASS] test_withdraw_doesNotBreakActiveDuels() (gas: 577349)
+[PASS] test_withdraw_ownerCanWithdraw() (gas: 70092)
+[PASS] test_withdraw_revertsIfInsufficientBalance() (gas: 34684)
+[PASS] test_withdraw_revertsIfNotOwner() (gas: 33255)
+[PASS] test_withdraw_revertsZeroAddress() (gas: 30430)
+[PASS] test_withdraw_revertsZeroAmount() (gas: 32666)
+Suite result: ok. 35 passed; 0 failed; 0 skipped; finished in 8.43ms (9.72ms CPU time)
+
+Ran 14 tests for test/WagerSides.t.sol:WagerSidesTest
+[PASS] testFuzz_sides_fuzzOutcome(bool,bool,uint96) (runs: 256, μ: 920234, ~: 920219)
+[PASS] test_creatorDown_cancelFlow() (gas: 419317)
+[PASS] test_creatorDown_downWins_creatorWins() (gas: 585626)
+[PASS] test_creatorDown_settleRevertsIfNotResolved() (gas: 779323)
+[PASS] test_creatorDown_splitPayout_refundsBoth() (gas: 576093)
+[PASS] test_creatorDown_upWins_joinerWins() (gas: 573059)
+[PASS] test_creatorDown_voidRefund() (gas: 841591)
+[PASS] test_creatorUp_downWins_joinerWins() (gas: 573155)
+[PASS] test_creatorUp_splitPayout_refundsBoth() (gas: 576147)
+[PASS] test_creatorUp_upWins_creatorWins() (gas: 585622)
+[PASS] test_side_event_emitted() (gas: 361392)
+[PASS] test_side_stored_creatorDown() (gas: 362154)
+[PASS] test_side_stored_creatorUp() (gas: 362141)
+[PASS] test_sides_matrix_noFee() (gas: 2123513)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 33.04ms (39.63ms CPU time)
+
+Ran 4 test suites in 43.28ms (56.73ms CPU time): 68 tests passed, 3 failed, 0 skipped (71 total tests)
+
+Failing tests:
+Encountered 3 failing tests in test/WagerPrematureSettlement.t.sol:WagerPrematureSettlementTest
+[FAIL: panic: arithmetic underflow or overflow (0x11)] test_settle_revertsOnStaleModuleRecord() (gas: 283)
+[FAIL: next call did not revert as expected] test_settle_revertsWhileMarketStillTrading() (gas: 751785)
+[FAIL: next call did not revert as expected] test_settle_succeedsAfterExpiryWithRealPayouts() (gas: 814810)
+
+Encountered a total of 3 failing tests, 68 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 3 failed tests
+Tip: Run `forge test --debug --match-test <TEST_NAME>` to inspect one failing test in the debugger
