@@ -104,16 +104,10 @@ jobs:
               console.log("balance:", formatEther(bal), "STT");
               if (bal < 2000000000000000000n) { console.log("::error::deployer needs >= 2 STT gas"); process.exit(1); }
             });'
-      - name: Deploy V30 (side support + hardened settle)
-        run: |
-          forge script script/DeployV30.s.sol \
-            --rpc-url $RPC \
-            --private-key $DEPLOYER_PK \
-            --broadcast \
-            --legacy \
-            --with-gas-price 60000000000 \
-            --gas-estimate-multiplier 200 \
-            -vvv 2>&1 | tee deploy-v30.log
+      - name: Deploy V30 (side support + hardened settle) + on-chain smoke
+        run: node script/deploy-v30.mjs 2>&1 | tee deploy-v30.log
+      - name: Redact smoke log (strip tx hashes + private details)
+        run: sed -E 's/0x[0-9a-f]{64}/<txhash>/g' deploy-v30.log > deploy-v30.redacted.log && mv deploy-v30.redacted.log deploy-v30.log
       - name: Commit deploy log via Contents API
         if: always()
         env:
