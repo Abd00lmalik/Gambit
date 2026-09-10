@@ -18,12 +18,17 @@ Gambit reads DreamDEX Event Contracts as an oracle and leverages **Somnia reacti
 
 ## Deployed Contracts
 
-### Factory v6 (CURRENT — ACTIVE)
+### Factory V30 (CURRENT — ACTIVE, creator-side support)
 | Contract | Address |
 |---|---|
-| GambitFactory | `0xf96913baFdb849c3c9d765879247F3EC9D3749cF` |
-| Implementation | `0xEa6971C152341C0c92c292908b2215BE260114d5` |
-| Balance | 50 STT |
+| GambitFactory | `0xea5f3130a5ed09929da3e156ec0308c58de6a2e1` |
+| Implementation (Wager) | `0x688a7a70725fd3580b1B7218EAc28388Fe3a2a7a` |
+| Fee recipient | `0x25265b9dBEb6c653b0CA281110Bb0697a9685107` (250 bps) |
+
+- `createDuel(marketAddress, marketId, joinDeadline, creatorIsUp)` — creator picks UP **or** DOWN; the side is stored on the clone (`creatorIsUp()` view) and `settle()` pays whoever picked the side that actually won.
+- `settle()` is hardened: refuses to settle before the market's expiry timestamp, and refuses STALE module records (see DreamDEX quirks below).
+- Verified on-chain 2026-09-10: DOWN-side creation smoke test passed end-to-end (side stored, stake reclaimed via cancelDuel).
+- Legacy duels (pre-V30, factory `0x089079B21dD6A495D4c3f6844ABCab806fcf5d9E`) keep working; the UI routes cancel/refund to each duel's own factory via the clone's `factory()` read. |
 
 ### Stranded Factories (DO NOT USE)
 | Version | Address | Balance |
@@ -88,6 +93,11 @@ Gambit reads DreamDEX Event Contracts as an oracle and leverages **Somnia reacti
 ### DreamDEX-Specific
 | Issue | Details |
 |---|---|
+| **`isResolved()` LIES before expiry** | Market contracts return `isResolved() == true` with PLACEHOLDER payouts `[10000000, 0]` while still trading (verified on-chain 2026-09-10 on five live markets). NEVER use `isResolved`/`payoutNumerators` alone as resolution proof. Genuine resolution = OracleAnswer (prd indexer, final price in cents) + confirmed resolution tx + expiry passed + indexer `clobStatus` finalized. See `useOracleResolution` hook and `Wager.settle()` guards. |
+| **marketId reuse / STALE module records** | Recurring series reuse marketIds; `BinaryMarketsModule.markets(marketId)` can point at a PAST window's Market contract with frozen payouts (verified: module expiry 2026-08-11 for a market that expired 2026-09-10 — ALL four live markets probed were stale the same way). Creation is blocked against stale records (`verifyMarketAddress` compares module vs indexer expiry); `settle()` refuses stale records (`"stale market record"`). |
+| **Contract deploy gas** | Deploying GambitFactory (+inline Wager) measured 36.6M gas on Somnia. `forge script` fails with RPC error -32602 — use `script/deploy-v30.mjs` (viem, legacy gas price). |
+| **Oracle answers are in cents** | `OracleAnswer.numericValue` is price × 100 (e.g. `7796600` = $77,966.00). Resolution rule: final ≥ opening → UP won (question: "closes at or above its opening price"). |
+| **Does NOT support SOL or SOMI** | Only BTC and ETH markets exist |
 | **Does NOT support SOL or SOMI** | Only BTC and ETH markets exist |
 | **Supports 5m markets** | App uses 5m/15m/1h intervals |
 | **`expiry: {_gt: now}` filter** | Works — use server-side GraphQL filtering, no client-side expiry filter needed |

@@ -109,7 +109,6 @@ export default function DuelPage({ params }: { params: { id: string } }) {
     contractWinningSide != null &&
     oracleWinningSide !== contractWinningSide;
 
-  const effectivePayouts = resolvedFromMarket ? market.payoutNumerators : poolMarket.payoutNumerators;
 
   // Fetch market data from DreamDEX indexer (reuses Create Duel logic)
   useEffect(() => {
@@ -556,12 +555,18 @@ export default function DuelPage({ params }: { params: { id: string } }) {
                       await ensureCorrectNetwork();
                       return;
                     }
-                    // Use factory.cancelDuel() — permissionless, works before deadline if market resolved
+                    // Use the duel's OWN factory cancelDuel() — permissionless and
+                    // works before deadline if market resolved. Legacy duels were
+                    // created by the previous factory; reading factory() from the
+                    // clone routes the call correctly for both old and new duels.
                     const { writeContract } = await import("wagmi/actions");
                     const { FACTORY_ADDRESS } = await import("@/lib/contracts");
                     const { FACTORY_ABI } = await import("@/lib/contracts");
+                    const targetFactory = (duel.duelFactory && duel.duelFactory !== "0x0000000000000000000000000000000000000000"
+                      ? duel.duelFactory
+                      : FACTORY_ADDRESS) as Address;
                     await writeContract(config, {
-                      address: FACTORY_ADDRESS,
+                      address: targetFactory,
                       abi: FACTORY_ABI,
                       functionName: "cancelDuel",
                       args: [duelAddress],
