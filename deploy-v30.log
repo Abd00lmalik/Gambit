@@ -1,34 +1,25 @@
 compiled GambitFactory: 11249 bytes of creation code
 deployer: 0x0022EC010030158cC27B283BA640706eDBa6080f
-deployer balance: 45.410319482 STT
-estimated deploy gas: 54914250n
-deploy tx: 0x0100ffb9ab4a78bad16861d3477f3e97fcc810059f2cf0a730085d5b37197079
-status: success block: 484741715n gasUsed: 36609500n
-FACTORY_ADDRESS=0xea5f3130a5ed09929da3e156ec0308c58de6a2e1
-file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/utils/chain/getChainContractAddress.js:5
-        throw new ChainDoesNotSupportContract({
-              ^
-
-ChainDoesNotSupportContract: Chain "Somnia Testnet" does not support contract "multicall3".
-
-This could be due to any of the following:
-- The chain does not have the contract "multicall3" configured.
-
-Version: viem@2.56.3
-    at getChainContractAddress (file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/utils/chain/getChainContractAddress.js:5:15)
-    at file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/actions/public/multicall.js:65:20
-    at multicall (file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/actions/public/multicall.js:72:7)
-    at Object.multicall (file:///home/runner/work/Gambit/Gambit/node_modules/viem/_esm/clients/decorators/public.js:104:30)
-    at file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:114:41
-    at process.processTicksAndRejections (node:internal/process/task_queues:103:5) {
-  details: undefined,
-  docsPath: undefined,
-  metaMessages: [
-    'This could be due to any of the following:',
-    '- The chain does not have the contract "multicall3" configured.'
-  ],
-  shortMessage: 'Chain "Somnia Testnet" does not support contract "multicall3".',
-  version: '2.56.3'
+deployer balance: 45.190662482 STT
+using existing factory: 0xea5f3130a5ed09929da3e156ec0308c58de6a2e1
+{
+  implementation: '0x688a7a70725fd3580b1B7218EAc28388Fe3a2a7a',
+  feeRecipient: '0x25265b9dBEb6c653b0CA281110Bb0697a9685107',
+  defaultFeeBps: '250',
+  minStake: '100000000000000000',
+  maxStake: '100000000000000000000'
 }
+implementation.creatorIsUp() (pre-init): false
+smoke market: 0x1609a2109b3dbcfa1250afc110a87d85e7ff3bf2 <txhash>
+createDuel(DOWN) tx: <txhash>
+create status: success gasUsed: 2882668n
+smoke duel clone: 0xaec766a252e8086e436a59748ad8d5c69eb30623 creatorIsUp: false
+clone.creatorIsUp() (stored on-chain): false
+waiting 95s for the smoke duel's join deadline...
+cancel status: success
+smoke duel state after cancel (4 = CANCELLED): 4 | deployer balance: 45.17184704 STT
 
-Node.js v22.23.2
+=== V30 DEPLOYMENT VERIFIED ===
+FACTORY_ADDRESS=0xea5f3130a5ed09929da3e156ec0308c58de6a2e1
+IMPLEMENTATION_ADDRESS=0x688a7a70725fd3580b1B7218EAc28388Fe3a2a7a
+creatorIsUp smoke test: PASSED (creator DOWN stored, verified, stake reclaimed)
