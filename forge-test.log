@@ -1,5 +1,5 @@
 Compiling 37 files with Solc 0.8.28
-Solc 0.8.28 finished in 2.67s
+Solc 0.8.28 finished in 2.46s
 Compiler run successful with warnings:
 Warning (2072): Unused local variable.
    --> test/ParimutuelPool.t.sol:160:9:
@@ -32,7 +32,7 @@ Ran 5 tests for test/WagerPrematureSettlement.t.sol:WagerPrematureSettlementTest
 [PASS] test_settle_revertsWhileMarketStillTrading() (gas: 877340)
 [PASS] test_settle_succeedsAfterExpiryWithRealPayouts() (gas: 1041161)
 [PASS] test_settle_zeroExpirySkipsGuard() (gas: 932588)
-Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 3.45ms (2.29ms CPU time)
+Suite result: ok. 5 passed; 0 failed; 0 skipped; finished in 2.80ms (2.02ms CPU time)
 
 Ran 17 tests for test/ParimutuelPool.t.sol:ParimutuelPoolTest
 [PASS] test_claimRefund() (gas: 349523)
@@ -52,24 +52,7 @@ Ran 17 tests for test/ParimutuelPool.t.sol:ParimutuelPoolTest
 [PASS] test_revertsIfNoDepositOnWinningSide() (gas: 410499)
 [PASS] test_revertsIfNotResolved() (gas: 141677)
 [PASS] test_revertsIfZeroDeposit() (gas: 39530)
-Suite result: ok. 17 passed; 0 failed; 0 skipped; finished in 8.97ms (5.59ms CPU time)
-
-Ran 14 tests for test/WagerSides.t.sol:WagerSidesTest
-[PASS] testFuzz_sides_fuzzOutcome(bool,bool,uint96) (runs: 256, μ: 920236, ~: 920228)
-[PASS] test_creatorDown_cancelFlow() (gas: 419317)
-[PASS] test_creatorDown_downWins_creatorWins() (gas: 585626)
-[PASS] test_creatorDown_settleRevertsIfNotResolved() (gas: 779323)
-[PASS] test_creatorDown_splitPayout_refundsBoth() (gas: 576093)
-[PASS] test_creatorDown_upWins_joinerWins() (gas: 573059)
-[PASS] test_creatorDown_voidRefund() (gas: 841591)
-[PASS] test_creatorUp_downWins_joinerWins() (gas: 573155)
-[PASS] test_creatorUp_splitPayout_refundsBoth() (gas: 576147)
-[PASS] test_creatorUp_upWins_creatorWins() (gas: 585622)
-[PASS] test_side_event_emitted() (gas: 361392)
-[PASS] test_side_stored_creatorDown() (gas: 362154)
-[PASS] test_side_stored_creatorUp() (gas: 362141)
-[PASS] test_sides_matrix_noFee() (gas: 2123513)
-Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 36.75ms (39.41ms CPU time)
+Suite result: ok. 17 passed; 0 failed; 0 skipped; finished in 3.20ms (2.33ms CPU time)
 
 Ran 35 tests for test/Wager.t.sol:GambitTest
 [PASS] test_cancel_revertsBeforeDeadline() (gas: 388392)
@@ -107,6 +90,23 @@ Ran 35 tests for test/Wager.t.sol:GambitTest
 [PASS] test_withdraw_revertsIfNotOwner() (gas: 33255)
 [PASS] test_withdraw_revertsZeroAddress() (gas: 30430)
 [PASS] test_withdraw_revertsZeroAmount() (gas: 32666)
-Suite result: ok. 35 passed; 0 failed; 0 skipped; finished in 36.53ms (9.88ms CPU time)
+Suite result: ok. 35 passed; 0 failed; 0 skipped; finished in 14.05ms (8.07ms CPU time)
 
-Ran 4 test suites in 40.07ms (85.71ms CPU time): 71 tests passed, 0 failed, 0 skipped (71 total tests)
+Ran 14 tests for test/WagerSides.t.sol:WagerSidesTest
+[PASS] testFuzz_sides_fuzzOutcome(bool,bool,uint96) (runs: 256, μ: 920232, ~: 920219)
+[PASS] test_creatorDown_cancelFlow() (gas: 419317)
+[PASS] test_creatorDown_downWins_creatorWins() (gas: 585626)
+[PASS] test_creatorDown_settleRevertsIfNotResolved() (gas: 779323)
+[PASS] test_creatorDown_splitPayout_refundsBoth() (gas: 576093)
+[PASS] test_creatorDown_upWins_joinerWins() (gas: 573059)
+[PASS] test_creatorDown_voidRefund() (gas: 841591)
+[PASS] test_creatorUp_downWins_joinerWins() (gas: 573155)
+[PASS] test_creatorUp_splitPayout_refundsBoth() (gas: 576147)
+[PASS] test_creatorUp_upWins_creatorWins() (gas: 585622)
+[PASS] test_side_event_emitted() (gas: 361392)
+[PASS] test_side_stored_creatorDown() (gas: 362154)
+[PASS] test_side_stored_creatorUp() (gas: 362141)
+[PASS] test_sides_matrix_noFee() (gas: 2123513)
+Suite result: ok. 14 passed; 0 failed; 0 skipped; finished in 32.52ms (35.21ms CPU time)
+
+Ran 4 test suites in 33.46ms (52.57ms CPU time): 71 tests passed, 0 failed, 0 skipped (71 total tests)
