@@ -54,6 +54,13 @@ export const FACTORY_ABI = [
     stateMutability: "view",
   },
   {
+    type: "function",
+    name: "cancelDuel",
+    inputs: [{ name: "clone", type: "address" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
     type: "event",
     name: "DuelCreated",
     inputs: [

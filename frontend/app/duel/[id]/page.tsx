@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 import { useAccount } from "wagmi";
 import { type Address } from "viem";
+import { config } from "@/lib/config";
 import AssetIcon from "@/components/AssetIcon";
 import PlayerAvatar from "@/components/PlayerAvatar";
 import CountdownTimer from "@/components/CountdownTimer";
@@ -131,6 +132,10 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   // The reactive auto-refund should have fired but didn't (subscription missing or callback reverted)
   const deadlinePassed = !!duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
   const isStuck = state === DuelState.CREATED && deadlinePassed && market.isResolved;
+
+  // Creator refund: nobody joined, market resolved (even before deadline)
+  // Uses factory.cancelDuel() which is permissionless and works before deadline if market resolved
+  const canCreatorRefund = state === DuelState.CREATED && !hasJoined && isCreator && effectiveIsResolved;
 
   return (
     <div className="min-h-screen py-8 px-4">
@@ -348,27 +353,35 @@ export default function DuelPage({ params }: { params: { id: string } }) {
 
           {/* Claim button — only visible to the winner when market resolved */}
           {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isWinner && (
-            <button
-              disabled={actions.isPending || isChecking}
-              onClick={async () => {
-                try {
-                  if (!isCorrectNetwork) {
-                    await ensureCorrectNetwork();
-                    return;
-                  }
-                  await actions.settleDuel();
-                } catch {}
-              }}
-              className="min-h-[52px] w-full rounded-xl bg-up py-3 font-display text-base font-bold text-carbon transition-all hover:bg-up/80 hover:shadow-lg hover:shadow-up/20 active:scale-[0.97] disabled:opacity-70"
-            >
-              {actions.isPending
-                ? "Claiming..."
-                : isChecking
-                  ? "Switching Network..."
-                  : !isCorrectNetwork
-                    ? "Switch to Somnia Testnet"
-                    : "Claim Winnings →"}
-            </button>
+            <div className="rounded-xl border border-up/30 bg-up/5 p-5 mb-3">
+              <div className="text-center mb-4">
+                <p className="font-display text-2xl font-bold text-up mb-1">You Won!</p>
+                <p className="font-body text-sm text-gray-400">
+                  Pot: {duel.pot || "0"} STT · After 2.5% fee: {duel.pot ? (parseFloat(duel.pot) * 0.975).toFixed(3) : "0"} STT
+                </p>
+              </div>
+              <button
+                disabled={actions.isPending || isChecking}
+                onClick={async () => {
+                  try {
+                    if (!isCorrectNetwork) {
+                      await ensureCorrectNetwork();
+                      return;
+                    }
+                    await actions.settleDuel();
+                  } catch {}
+                }}
+                className="min-h-[52px] w-full rounded-xl bg-up py-3 font-display text-base font-bold text-carbon transition-all hover:bg-up/80 hover:shadow-lg hover:shadow-up/20 active:scale-[0.97] disabled:opacity-70"
+              >
+                {actions.isPending
+                  ? "Claiming..."
+                  : isChecking
+                    ? "Switching Network..."
+                    : !isCorrectNetwork
+                      ? "Switch to Somnia Testnet"
+                      : "Cashout →"}
+              </button>
+            </div>
           )}
 
           {/* Market resolved but not the winner or can't determine winner — show settle for anyone (permissionless) */}
@@ -448,6 +461,46 @@ export default function DuelPage({ params }: { params: { id: string } }) {
                     : !isCorrectNetwork
                       ? "Switch to Somnia Testnet"
                       : "Recover Funds →"}
+              </button>
+            </div>
+          )}
+
+          {/* Creator refund — nobody joined, market resolved */}
+          {canCreatorRefund && !isStuck && (
+            <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/5 p-4">
+              <p className="font-body text-sm text-yellow-400 font-medium mb-3">
+                Nobody joined this duel and the market has resolved. Reclaim your stake.
+              </p>
+              <button
+                disabled={actions.isPending || isChecking}
+                onClick={async () => {
+                  try {
+                    if (!isCorrectNetwork) {
+                      await ensureCorrectNetwork();
+                      return;
+                    }
+                    // Use factory.cancelDuel() — permissionless, works before deadline if market resolved
+                    const { writeContract } = await import("wagmi/actions");
+                    const { FACTORY_ADDRESS } = await import("@/lib/contracts");
+                    const { FACTORY_ABI } = await import("@/lib/contracts");
+                    await writeContract(config, {
+                      address: FACTORY_ADDRESS,
+                      abi: FACTORY_ABI,
+                      functionName: "cancelDuel",
+                      args: [duelAddress],
+                      gas: BigInt(5000000),
+                    });
+                  } catch {}
+                }}
+                className="min-h-[52px] w-full rounded-xl bg-yellow-400 py-3 font-display text-base font-bold text-carbon transition-all hover:bg-yellow-400/80 active:scale-[0.97]"
+              >
+                {actions.isPending
+                  ? "Reclaiming..."
+                  : isChecking
+                    ? "Switching Network..."
+                    : !isCorrectNetwork
+                      ? "Switch to Somnia Testnet"
+                      : "Reclaim Stake →"}
               </button>
             </div>
           )}

@@ -5,16 +5,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useAccount } from "wagmi";
 import { useSearchParams } from "next/navigation";
 import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
-import { usePublicClient, useReadContract } from "wagmi";
+import { usePublicClient } from "wagmi";
 import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
-import { somnia, config } from "@/lib/config";
-import { FACTORY_ADDRESS, WAGER_ABI, DREAMDEX_ABI, BINARY_MARKETS_MODULE_ADDRESS, BINARY_MARKETS_MODULE_ABI } from "@/lib/contracts";
+import { somnia } from "@/lib/config";
+import { FACTORY_ADDRESS } from "@/lib/contracts";
 import { DuelState, DUEL_STATE_LABELS } from "@/lib/contracts";
 import AssetIcon from "@/components/AssetIcon";
 import PlayerAvatar from "@/components/PlayerAvatar";
 import CountdownTimer from "@/components/CountdownTimer";
-
-const AUTO_SETTLE_INTERVAL_MS = 30000; // Check every 30s on Arena page
 
 const FILTERS = ["All", "BTC", "ETH", "Open", "Live", "Settled"] as const;
 
@@ -94,7 +92,6 @@ function ArenaContent() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refetch]);
   const client = usePublicClient({ chainId: somnia.id });
-  const settledCheckRef = useRef<Set<string>>(new Set());
 
   // Highlight effect
   useEffect(() => {
@@ -127,119 +124,6 @@ function ArenaContent() {
 
     tryHighlight();
   }, [highlight, client, duels]);
-
-  // P1: Background auto-settle check for user's duels on Arena page
-  // Scans user's LOCKED duels and triggers settle() if market is resolved
-  useEffect(() => {
-    if (!connectedAddress || !client || isLoading || duels.length === 0) return;
-
-    let cancelled = false;
-    let intervalId: NodeJS.Timeout;
-
-    const checkAndSettle = async () => {
-      if (cancelled) return;
-
-      // Find user's duels that are LOCKED (joined)
-      const userDuels = duels.filter(
-        (d) =>
-          d.state === DuelState.LOCKED &&
-          (d.playerA?.toLowerCase() === connectedAddress.toLowerCase() ||
-            d.playerB?.toLowerCase() === connectedAddress.toLowerCase())
-      );
-
-      if (userDuels.length === 0) return;
-
-      for (const duel of userDuels) {
-        if (cancelled) break;
-        const duelKey = duel.address.toLowerCase();
-
-        // Skip if already checked and settled in this session
-        if (settledCheckRef.current.has(duelKey)) continue;
-
-        try {
-          // Read marketId from Wager, then resolve the canonical Market contract
-          // duel.marketAddress is the CLOB listing address (may have no EVM code)
-          const marketIdResult = await client.readContract({
-            address: duel.address as `0x${string}`,
-            abi: WAGER_ABI,
-            functionName: "marketId",
-          });
-
-          const recordResult = await client.readContract({
-            address: BINARY_MARKETS_MODULE_ADDRESS,
-            abi: BINARY_MARKETS_MODULE_ABI,
-            functionName: "markets",
-            args: [marketIdResult],
-          });
-
-          // .market is at index 8 in the MarketRecord tuple
-          const resolvedMarketAddress = (recordResult as any)?.[8];
-          const poolAddress = (recordResult as any)?.[9];
-
-          // Check if market is resolved — try market address first, then pool fallback
-          let isResolved = false;
-          if (resolvedMarketAddress) {
-            try {
-              isResolved = await client.readContract({
-                address: resolvedMarketAddress,
-                abi: DREAMDEX_ABI,
-                functionName: "isResolved",
-              }) as boolean;
-            } catch {}
-          }
-          // Era 3 fallback: if market address has no code, try pool address
-          if (!isResolved && poolAddress) {
-            try {
-              isResolved = await client.readContract({
-                address: poolAddress,
-                abi: DREAMDEX_ABI,
-                functionName: "isResolved",
-              }) as boolean;
-            } catch {}
-          }
-
-          if (!isResolved) continue;
-
-          // Check if duel is already settled (state may be stale)
-          const duelState = await client.readContract({
-            address: duel.address as `0x${string}`,
-            abi: WAGER_ABI,
-            functionName: "state",
-          });
-
-          if (Number(duelState) === DuelState.SETTLED) {
-            settledCheckRef.current.add(duelKey);
-            continue;
-          }
-
-          // Trigger settle() - permissionless, anyone can call
-          console.log(`[Auto-settle] Triggering settle for ${duel.address}`);
-          const { writeContract } = await import("wagmi/actions");
-          await writeContract(config, {
-            address: duel.address as `0x${string}`,
-            abi: WAGER_ABI,
-            functionName: "settle",
-            gas: BigInt(2000000),
-          });
-          settledCheckRef.current.add(duelKey);
-        } catch (e) {
-          // Ignore - another caller may have succeeded, or user not on correct network
-          console.debug(`[Auto-settle] Failed for ${duel.address}:`, e);
-        }
-      }
-    };
-
-    // Initial check
-    checkAndSettle();
-
-    // Periodic check
-    intervalId = setInterval(checkAndSettle, AUTO_SETTLE_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId);
-    };
-  }, [connectedAddress, client, duels, isLoading]);
 
   const filtered = duels
     .filter((d) => {
