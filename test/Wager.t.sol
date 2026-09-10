@@ -142,7 +142,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketYesWon),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         // Verify clone state
@@ -182,7 +183,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketNoWon),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -213,7 +215,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketVoided),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -240,7 +243,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketYesWon),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -266,7 +270,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.warp(deadline + 1);
@@ -287,7 +292,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.expectRevert("deadline not reached");
@@ -303,7 +309,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.warp(deadline + 1);
@@ -320,7 +327,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.warp(deadline + 1);
@@ -340,7 +348,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -368,7 +377,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.warp(deadline + 1);
@@ -391,7 +401,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE * 2);
@@ -414,7 +425,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE / 2);
@@ -435,7 +447,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         // Alice already deposited via createDuel — calling join directly should revert
@@ -456,7 +469,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -477,7 +491,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         // Send more than stakeAmount
@@ -495,7 +510,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE * 2);
@@ -521,7 +537,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketYesWon),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -550,7 +567,8 @@ contract GambitTest is Test {
         address clone = highFeeFactory.createDuel{value: STAKE}(
             address(marketYesWon),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -580,7 +598,8 @@ contract GambitTest is Test {
         address clone = roundingFactory.createDuel{value: tinyStake}(
             address(marketYesWon),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, tinyStake);
@@ -613,7 +632,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -635,7 +655,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketZeroPayout),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -665,7 +686,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketSplit),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -697,7 +719,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketYesWon), // already resolved
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         // Deadline hasn't passed yet, but market is resolved
@@ -716,7 +739,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved), // not resolved
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.expectRevert("factoryCancel failed");
@@ -731,7 +755,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.warp(deadline + 1);
@@ -756,7 +781,8 @@ contract GambitTest is Test {
         address clone = factory.createDuel{value: STAKE}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         assertEq(Wager(payable(clone)).getPot(), STAKE);
@@ -824,7 +850,8 @@ contract GambitTest is Test {
         address clone1 = factory.createDuel{value: STAKE}(
             address(marketYesWon),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
 
         vm.deal(bob, STAKE);
@@ -855,7 +882,8 @@ contract GambitTest is Test {
         factory.createDuel{value: MIN_STAKE / 2}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
     }
 
@@ -868,7 +896,8 @@ contract GambitTest is Test {
         factory.createDuel{value: MAX_STAKE + 1}(
             address(marketUnresolved),
             MOCK_MARKET_ID,
-            deadline
+            deadline,
+            true
         );
     }
 

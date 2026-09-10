@@ -39,7 +39,8 @@ contract GambitFactory {
         address indexed playerA,
         uint256 stakeAmount,
         address marketAddress,
-        uint256 joinDeadline
+        uint256 joinDeadline,
+        bool creatorIsUp
     );
 
     // ── Constructor ────────────────────────────────────────
@@ -89,11 +90,14 @@ contract GambitFactory {
     /// @param _marketAddress DreamDEX market contract address for this duel
     /// @param _marketId DreamDEX marketId (bytes32) used to resolve the canonical Market contract
     /// @param _joinDeadline Unix timestamp after which A can cancel if B hasn't joined
+    /// @param _creatorIsUp Which side the creator takes: true = UP, false = DOWN.
+    ///        Player B always takes the opposite side. Stored explicitly on the clone.
     /// @return clone Address of the newly deployed Wager clone
     function createDuel(
         address _marketAddress,
         bytes32 _marketId,
-        uint256 _joinDeadline
+        uint256 _joinDeadline,
+        bool _creatorIsUp
     ) external payable returns (address clone) {
         require(msg.value >= minStake, "stake below min");
         require(msg.value <= maxStake, "stake above max");
@@ -114,14 +118,15 @@ contract GambitFactory {
             _marketId,
             defaultFeeBps,
             feeRecipient,
-            _joinDeadline
+            _joinDeadline,
+            _creatorIsUp
         );
 
         // Forward player A's stake to the clone via recordDeposit()
         // (factory is trusted — recordDeposit() checks msg.sender == factory)
         Wager(payable(clone)).recordDeposit{value: msg.value}(msg.sender);
 
-        emit DuelCreated(clone, msg.sender, msg.value, _marketAddress, _joinDeadline);
+        emit DuelCreated(clone, msg.sender, msg.value, _marketAddress, _joinDeadline, _creatorIsUp);
     }
 
     /// @notice Accept ETH for owner withdrawals.

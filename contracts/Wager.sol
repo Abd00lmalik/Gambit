@@ -29,6 +29,14 @@ contract Wager {
     mapping(address => uint256) public deposits;
     bool private _initialized;
 
+    /// @notice Which side the creator (playerA) picked at creation time.
+    /// @dev true  = creator is UP  (playerB is DOWN)
+    ///      false = creator is DOWN (playerB is UP)
+    ///      Set explicitly via initialize(); NEVER assume playerA is always Up.
+    ///      Duels created before this field existed (legacy clones) default to
+    ///      `true` when the field is not readable — matching the old behaviour.
+    bool public creatorIsUp;
+
     /// @notice Resolved Market contract address (from BinaryMarketsModule.markets(marketId)).
     /// @dev Stored once at initialize() time. Used by settle(), refund() to read
     ///      isResolved/isVoided/payoutNumerators — never reads from raw marketAddress,
@@ -48,7 +56,8 @@ contract Wager {
         bytes32 _marketId,
         uint256 _feeBps,
         address _feeRecipient,
-        uint256 _joinDeadline
+        uint256 _joinDeadline,
+        bool _creatorIsUp
     ) external {
         require(!_initialized, "already initialized");
         _initialized = true;
@@ -68,6 +77,7 @@ contract Wager {
         feeBps = _feeBps;
         feeRecipient = _feeRecipient;
         joinDeadline = _joinDeadline;
+        creatorIsUp = _creatorIsUp;
         state = WagerState.CREATED;
 
         // Resolve the canonical Market contract ONCE and store it.
@@ -152,8 +162,14 @@ contract Wager {
 
         state = WagerState.SETTLED;
 
+        // Winner is determined by comparing the ACTUAL resolved outcome against
+        // the sides each player picked (stored at creation), NOT by assuming
+        // playerA is always Up.
+        //   p[0] > 0 → UP won · p[1] > 0 → DOWN won
+        bool upWon = p[0] > 0;
+        address winner = (upWon == creatorIsUp) ? playerA : playerB;
+
         uint256 pot = address(this).balance;
-        address winner = (p[0] > 0) ? playerA : playerB;
 
         if (feeBps > 0 && feeRecipient != address(0)) {
             uint256 fee = (pot * feeBps) / 10000;

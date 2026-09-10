@@ -21,12 +21,14 @@ jobs:
       - name: Install viem
         run: npm install --no-audit --no-fund
       - name: Run investigation
-        run: node script/investigate-duel.mjs 2>&1 | tee investigation-report.md
+        run: |
+          node script/investigate-duel.mjs 2>&1 | tee investigation-report.md
+          node script/investigate-resolution.mjs 2>&1 | tee investigation-resolution.md || true
       - name: Commit report back to branch
         run: |
           git config user.name "arena-ai-coding-agent[bot]"
           git config user.email "arena-ai-coding-agent[bot]@users.noreply.github.com"
-          git add investigation-report.md
+          git add investigation-report.md investigation-resolution.md
           git commit -m "ci: investigation report [skip ci]" || echo "nothing to commit"
           git push origin HEAD:arena/01a08b4d-gambit
 
