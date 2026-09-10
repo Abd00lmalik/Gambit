@@ -151,6 +151,16 @@ export default function DuelPage({ params }: { params: { id: string } }) {
     (winnerSide === "up" ? isJoiner : winnerSide === "down" ? isCreator : false);
   const isParticipant = hasJoined && (isCreator || isJoiner);
   const resultKind: ResultKind = isVoided || winnerSide === "tie" ? "void" : isWinner ? "won" : "lost";
+  // Funds-safety: market truth (derived from the market's own yesId slots) vs
+  // what the DEPLOYED settle() will pay (hardcoded payouts[0]=Up). When they
+  // differ, every claim UI is disabled and the mismatch banner explains — the
+  // contract would transfer the pot to the wrong player.
+  const payoutMismatch =
+    effectiveIsResolved &&
+    resolution.slotsKnown &&
+    !!resolution.winnerSide &&
+    !!resolution.contractWinnerSide &&
+    resolution.winnerSide !== resolution.contractWinnerSide;
 
   // P1: Detect stuck duels — CREATED state, deadline passed, market resolved
   // The reactive auto-refund should have fired but didn't (subscription missing or callback reverted)
@@ -380,8 +390,24 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </button>
           )}
 
+          {/* Deployed-contract payout-slot mismatch: the market result says one side
+              won, the on-chain settle() (which reads payouts[0] as “Up”) would
+              pay the other. Claiming is disabled until the contract is fixed —
+              the pot would otherwise go to the wrong player. */}
+          {payoutMismatch && (
+            <div className="rounded-xl border border-down/40 bg-down/10 p-4">
+              <p className="font-body text-sm text-down font-medium">
+                ⚠ DreamDEX market result: <span className="font-bold uppercase">{resolution.winnerSide}</span> won.
+                The deployed escrow would pay <span className="font-bold uppercase">{resolution.contractWinnerSide}</span> (its winner rule
+                assumes payouts[0] = Up, but this market’s payout vector is slot-inverted).
+                Claim is disabled — fix: redeploy <span className="font-mono">Wager.settle()</span> deriving the slot from
+                <span className="font-mono"> market.yesId()</span>, or settle via manual transfer by the counterparty.
+              </p>
+            </div>
+          )}
+
           {/* Claim button — only visible to the winner when market resolved */}
-          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isWinner && (
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isWinner && !payoutMismatch && (
             <div className="rounded-xl border border-up/30 bg-up/5 p-5 mb-3">
               <div className="text-center mb-4">
                 <p className="font-display text-2xl font-bold text-up mb-1">You Won!</p>
@@ -435,7 +461,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           )}
 
           {/* Market resolved but not the winner or can't determine winner — show settle for anyone (permissionless) */}
-          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isVoided && winnerSide !== "tie" && !isWinner && (
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isVoided && winnerSide !== "tie" && !isWinner && !payoutMismatch && (
             <button
               disabled={actions.isPending || isChecking}
               onClick={async () => {
@@ -602,14 +628,20 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           )}
 
           {/* Waiting for resolution */}
+          {hasJoined && state === DuelState.LOCKED && !effectiveIsResolved && (() => {
+            if (resolution.claimsResolvedPrematurely && typeof window !== "undefined") {
+              // Kept for forensics only — see the payout-slot note above; a
+              // candidate answering isResolved() before expiry is ignored.
+              console.debug("[gambit] suppressed premature resolution claim via", resolution.resolvedVia);
+            }
+            return null;
+          })()}
           {hasJoined && state === DuelState.LOCKED && !effectiveIsResolved && (
             <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-4 text-center">
               <p className="font-body text-sm text-yellow-400">
                 {resolution.candidates.length === 0
                   ? "Locating market contract on-chain…"
-                  : resolution.claimsResolvedPrematurely
-                    ? "A market contract reported resolution BEFORE this duel's countdown ended — ignoring it per the settlement rule. Resolution is checked the moment the countdown hits zero."
-                    : resolution.ambiguousPayoutVector
+                  : resolution.ambiguousPayoutVector
                     ? "Market is still quoting (live payout vector — no side finalized) — waiting for DreamDEX settlement…"
                     : resolution.resolvedPayoutsPending
                     ? "Market reports resolved; waiting for the settlement payout vector…"
@@ -668,7 +700,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
         kind={resultKind}
         pot={duel.pot}
         onDismiss={dismissPopup}
-        onClaim={resultKind === "won" ? async () => {
+        onClaim={resultKind === "won" && !payoutMismatch ? async () => {
           try {
             if (!isCorrectNetwork) {
               await ensureCorrectNetwork();

@@ -11,6 +11,11 @@ contract MockMarket {
     uint256[] private _payoutNumerators;
     bool private _isVoided;
 
+    /// @dev Low byte = payout-slot of each outcome. Defaults [Yes@0, No@1];
+    ///      setSlots(1, 0) models Somnia testnet markets, which settle [No@0, Yes@1].
+    uint256 public yesId;
+    uint256 public noId;
+
     event Resolved(uint32 indexed outcome, uint256[] payoutNumerators);
     event StatusChanged(uint8 indexed oldStatus, uint8 indexed newStatus);
     event Voided();
@@ -18,6 +23,13 @@ contract MockMarket {
     constructor(uint8 status_, bool voided_) {
         _status = status_;
         _isVoided = voided_;
+        yesId = 0;
+        noId = 1;
+    }
+
+    function setSlots(uint256 yesSlot_, uint256 noSlot_) external {
+        yesId = yesSlot_;
+        noId = noSlot_;
     }
 
     function setStatus(uint8 s) external {
@@ -204,6 +216,64 @@ contract GambitTest is Test {
     // ═══════════════════════════════════════════════════════
     // VOID → REFUND
     // ═══════════════════════════════════════════════════════
+
+    /// @dev Regression: on Somnia testnet the payout vector is [No, Yes] —
+    ///      a YES-resolution market pays payouts[1]. The old code keyed the
+    ///      winner off payouts[0] and paid the WRONG player (real money moved
+    ///      to the losing side on duels 0x267AAFb3… and 0x651d5be6…).
+    ///      settle() must derive the YES slot from the market's own yesId().
+    function test_settle_invertedSlotOrder_yesStillPaysCreator() public {
+        uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
+
+        MockMarket inverted = new MockMarket(4, false); // resolved
+        inverted.setSlots(1, 0);            // YES lives in slot 1 (testnet reality)
+        inverted.setPayout(0, 10000000);    // payouts = [No:0, Yes:D] → YES won
+
+        vm.deal(alice, STAKE);
+        vm.prank(alice);
+        address clone = factory.createDuel{value: STAKE}(address(inverted), MOCK_MARKET_ID, deadline);
+
+        vm.deal(bob, STAKE);
+        vm.prank(bob);
+        (bool sent,) = clone.call{value: STAKE}("");
+        assertTrue(sent);
+        vm.prank(bob);
+        Wager(payable(clone)).join();
+
+        uint256 aliceBalBefore = alice.balance;
+        uint256 bobBalBefore = bob.balance;
+        Wager(payable(clone)).settle();
+
+        uint256 expectedFee = (STAKE * 2 * FEE_BPS) / 10000;
+        assertEq(alice.balance - aliceBalBefore, STAKE * 2 - expectedFee); // Alice (YES side) paid
+        assertEq(bobBalBefore - bob.balance, STAKE);                        // Bob only lost his stake
+    }
+
+    /// @dev Mirror case: NO wins on an inverted-slot market → payouts[0]=D → playerB paid.
+    function test_settle_invertedSlotOrder_noPaysJoiner() public {
+        uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;
+
+        MockMarket inverted = new MockMarket(4, false);
+        inverted.setSlots(1, 0);
+        inverted.setPayout(10000000, 0);    // payouts = [No:D, Yes:0] → NO won
+
+        vm.deal(alice, STAKE);
+        vm.prank(alice);
+        address clone = factory.createDuel{value: STAKE}(address(inverted), MOCK_MARKET_ID, deadline);
+
+        vm.deal(bob, STAKE);
+        vm.prank(bob);
+        (bool sent,) = clone.call{value: STAKE}("");
+        assertTrue(sent);
+        vm.prank(bob);
+        Wager(payable(clone)).join();
+
+        uint256 bobBalBefore = bob.balance;
+        Wager(payable(clone)).settle();
+
+        uint256 expectedFee = (STAKE * 2 * FEE_BPS) / 10000;
+        assertEq(bob.balance - bobBalBefore, STAKE * 2 - expectedFee);
+    }
 
     function test_refund_voidedMarket() public {
         uint256 deadline = block.timestamp + JOIN_DEADLINE_OFFSET;

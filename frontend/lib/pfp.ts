@@ -1,45 +1,49 @@
-// Shared server-side blob fetch used by both PFP routes. Kept OUT of the
-// route files because Next.js route.ts may only export HTTP handlers.
+import { get } from "@vercel/blob";
+
 export type ServeAttempt = { mode: string; status: number; type?: string | null };
 
 /**
- * Fetch a blob server-side through every auth mode this store might allow.
- * IMPORTANT: do NOT use getDownloadUrl(path) — in the installed @vercel/blob
- * it is `new URL(blobUrl)` + `?download=1`, i.e. it needs a FULL URL and
- * threw "Invalid URL" for relative paths (the root cause of every proxy 404
- * during this bug's history). The URL we get back from put() is canonical.
+ * Read a blob's bytes server-side from a PRIVATE Vercel Blob store.
+ *
+ * History of what did NOT work, so nobody re-tries it:
+ *  - getDownloadUrl(pathname): in the installed SDK this is `new URL(arg)` +
+ *    "?download=1" — full URLs only, and no auth at all (403 on private).
+ *  - fetch(blob.url + "?token=...") / ?download=1: the private data host only
+ *    accepts an Authorization header (VERCEL_OIDC_TOKEN preferred, falling
+ *    back to BLOB_READ_WRITE_TOKEN) — query-param auth is not a thing.
+ *  - bare fetch(blob.url): 403.
+ * The SDK's server-side get() implements exactly that header auth and accepts
+ * a store-relative pathname, so it works for paths AND (via pathname
+ * extraction) for stored full URLs. Returns bytes + content-type, or null.
  */
 export async function fetchBlobServerSide(
-  blobUrl: string
-): Promise<{ res: Response; attempt: ServeAttempt } | null> {
-  const token = process.env.BLOB_READ_WRITE_TOKEN;
-  const variants: Array<{ mode: string; url: string }> = [];
-  try {
-    const base = new URL(blobUrl);
-    variants.push({ mode: "plain", url: base.toString() });
-    const dl = new URL(blobUrl);
-    dl.searchParams.set("download", "1");
-    variants.push({ mode: "download", url: dl.toString() });
-    if (token) {
-      const tk = new URL(blobUrl);
-      tk.searchParams.set("token", token);
-      variants.push({ mode: "token", url: tk.toString() });
-      const both = new URL(tk.toString());
-      both.searchParams.set("download", "1");
-      variants.push({ mode: "token+download", url: both.toString() });
-    }
-  } catch {
-    return null; // not a full URL — caller must resolve via head()/DB first
-  }
-  for (const v of variants) {
+  urlOrPathname: string
+): Promise<{ bytes: ArrayBuffer; contentType: string } | null> {
+  // Normalize: stored pfp_url may be a full URL (current rows) or the proxy
+  // path "/api/pfp/<addr>" (interim rows → null) — accept plain pathnames too.
+  let pathname = urlOrPathname;
+  if (/^https?:\/\//.test(urlOrPathname)) {
     try {
-      const res = await fetch(v.url, { signal: AbortSignal.timeout(5000) });
-      const type = res.headers.get("content-type");
-      if (res.ok && (type ?? "").startsWith("image/")) {
-        return { res, attempt: { mode: v.mode, status: res.status, type } };
-      }
+      pathname = decodeURIComponent(new URL(urlOrPathname).pathname).replace(/^\//, "");
     } catch {
-      /* try next mode */
+      return null;
+    }
+  }
+  if (!pathname.startsWith("pfps/")) return null;
+
+  const attempts: Array<"private" | "public"> = ["private", "public"];
+  for (const access of attempts) {
+    try {
+      // useCache:false → always the freshest write (avatars overwrite in place).
+      const res = await get(pathname, { access, useCache: false });
+      if (!res || res.statusCode !== 200 || !res.stream) continue;
+      const buf = await new Response(res.stream).arrayBuffer();
+      if (buf.byteLength === 0) continue;
+      const type = res.blob?.contentType || res.headers?.get?.("content-type") || "image/jpeg";
+      if (!type.startsWith("image/")) continue;
+      return { bytes: buf, contentType: type };
+    } catch {
+      /* try next access mode */
     }
   }
   return null;

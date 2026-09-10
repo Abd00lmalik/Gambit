@@ -417,6 +417,20 @@ export const DREAMDEX_ABI = [
   },
   {
     type: "function",
+    name: "yesId",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "noId",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
     name: "status",
     inputs: [],
     outputs: [{ name: "", type: "uint8" }],

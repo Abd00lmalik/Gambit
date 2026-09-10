@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { head } from "@vercel/blob";
 import { getPfpBlobUrl } from "@/lib/db";
 import { fetchBlobServerSide } from "@/lib/pfp";
 
@@ -7,13 +6,15 @@ import { fetchBlobServerSide } from "@/lib/pfp";
 // the raw filename extension, e.g. .jpeg).
 const PROBE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
 
-async function resolveHeadUrl(pathname: string): Promise<string | null> {
-  try {
-    const meta = await head(pathname);
-    return meta?.url ?? null;
-  } catch {
-    return null; // not found / store error — try next
-  }
+function serve(hit: { bytes: ArrayBuffer; contentType: string }) {
+  return new NextResponse(hit.bytes, {
+    headers: {
+      "Content-Type": hit.contentType,
+      // Short-lived: images change, and a cached failure must never outlive
+      // the fix (404s are no-store below).
+      "Cache-Control": "public, max-age=60",
+    },
+  });
 }
 
 export async function GET(
@@ -23,52 +24,34 @@ export async function GET(
   const address = params.address.toLowerCase();
   const trace: string[] = [];
 
-  // 1) Authoritative: the exact blob URL recorded on the profile at upload
-  //    time (full URL for rows written by the current POST).
+  // 1) Authoritative: the pfp_url recorded on the profile (full blob URL for
+  //    current rows; the reader extracts the pathname and authenticates via
+  //    the SDK — private-store URLs are 403 for any unauthenticated fetch).
   const stored = await getPfpBlobUrl(address);
-  if (stored) {
-    if (stored.startsWith("http")) {
-      trace.push("db-url");
-      const hit = await fetchBlobServerSide(stored);
-      if (hit) return serve(hit);
-      trace.push("db-url:unreadable");
-    } else {
-      // Interim rows stored the proxy path itself ("/api/pfp/<addr>") —
-      // deterministic layout lets us rebuild the blob path.
-      trace.push("db:proxy-path");
+  if (stored && stored.startsWith("http")) {
+    trace.push("db-url");
+    const hit = await fetchBlobServerSide(stored);
+    if (hit) return serve(hit);
+    trace.push("db-url:unreadable");
+  } else if (stored) {
+    trace.push("db:non-url-value");
+  }
+
+  // 2) Fallback: deterministic pfps/<addr>.<ext> probe (DB missing/down or an
+  //    interim row that stored the proxy path instead of a URL).
+  for (const ext of PROBE_EXTS) {
+    const hit = await fetchBlobServerSide(`pfps/${address}.${ext}`);
+    if (hit) {
+      trace.push(`probe:${ext}:ok`);
+      return serve(hit);
     }
   }
+  trace.push("probes:none");
 
-  // 2) Fallback: probe the deterministic paths via head() to obtain real blob
-  //    URLs (works even when the DB is down or holds a legacy value).
-  for (const ext of PROBE_EXTS) {
-    const pathname = `pfps/${address}.${ext}`;
-    const url = await resolveHeadUrl(pathname);
-    if (!url) continue;
-    trace.push(`probe:${ext}`);
-    const hit = await fetchBlobServerSide(url);
-    if (hit) return serve(hit);
-    trace.push(`probe:${ext}:unreadable`);
-  }
-
-  // Explicitly uncached, so a retry right after an upload is never served
-  // from a stale 404. The JSON body doubles as a diagnostic.
+  // Uncached, so a retry right after an upload is never served from a stale
+  // 404; the JSON body doubles as a diagnostic when opened directly.
   return NextResponse.json(
-    { error: "PFP not found", address, stored, trace },
+    { error: "PFP not found", address, stored: stored ?? null, trace },
     { status: 404, headers: { "Cache-Control": "no-store" } }
   );
-}
-
-function serve(hit: { res: Response; attempt: { mode: string; status: number; type?: string | null } }) {
-  return hit.res.arrayBuffer().then((buf) => {
-    return new NextResponse(buf, {
-      headers: {
-        "Content-Type": hit.attempt.type ?? "image/jpeg",
-        // Short-lived: images change, and a cached failure must never
-        // outlive the fix (404s are no-store below).
-        "Cache-Control": "public, max-age=60",
-        "X-Pfp-Served-By": hit.attempt.mode,
-      },
-    });
-  });
 }

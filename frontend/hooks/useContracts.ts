@@ -333,7 +333,27 @@ export function useResolvedMarketAddress(
   const marketAddress = isZeroAddr(resolved?.[8]) ? (resolved[8] as Address) : undefined;
   const poolAddress = isZeroAddr(resolved?.[9]) ? (resolved[9] as Address) : undefined;
 
+  // YES/NO payout-slot derivation — the CRITICAL mapping. payoutNumerators() is
+  // indexed by OUTCOME SLOT, and on Somnia's testnet binary markets slot 0 is
+  // NO, slot 1 is YES (proven on-chain: duel 0x267AAFb3… resolved NO — BTC
+  // below strike at 08:45 — yet settle() paid playerA because the contract
+  // assumed payouts[0] == YES). The module record carries each market's own
+  // yesId/noId (uint256 ERC-6909 ids); the low 8 bits of the id ARE the payout
+  // slot (ids.js: id = (pool<<72)|(nonce<<8)|idx). Derive, never assume.
+  const slotOf = (v: unknown): 0 | 1 | null => {
+    try {
+      const bits = Number(BigInt(v as string | number | bigint) & BigInt(0xff));
+      return bits === 0 || bits === 1 ? (bits as 0 | 1) : null;
+    } catch {
+      return null;
+    }
+  };
+  const yesSlot = slotOf(resolved?.[10]);
+  const noSlot = slotOf(resolved?.[11]);
+
   return {
+    yesSlot,
+    noSlot,
     resolvedMarketAddress: marketAddress,
     poolAddress,
     error: record.error ?? null,
@@ -373,6 +393,23 @@ export function useMarketStatus(marketAddress: Address | undefined, refetchMs = 
     query: { enabled: !!marketAddress, refetchInterval: refetchMs },
   });
 
+  // The market's OWN outcome-token ids: the low byte of each is the payout
+  // slot that outcome occupies in payoutNumerators(). Read from the candidate
+  // itself so the winner mapping is derived from the exact contract whose
+  // vector we're reading — never from a global assumption.
+  const yesId = useReadContract({
+    address: marketAddress,
+    abi: DREAMDEX_ABI,
+    functionName: "yesId",
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
+  });
+  const noId = useReadContract({
+    address: marketAddress,
+    abi: DREAMDEX_ABI,
+    functionName: "noId",
+    query: { enabled: !!marketAddress, refetchInterval: refetchMs },
+  });
+
   // "Alive" means the address actually speaks the market interface: at least one
   // of isResolved()/payoutNumerators() answered (true OR false). A contract that
   // merely has some unrelated status() (e.g. a collateral pool) is NOT treated
@@ -380,11 +417,22 @@ export function useMarketStatus(marketAddress: Address | undefined, refetchMs = 
   const alive =
     !!marketAddress && (isResolved.data !== undefined || payoutNumerators.data !== undefined);
 
+  const slotOfId = (v: unknown): 0 | 1 | null => {
+    try {
+      const bits = Number(BigInt(v as string | number | bigint) & BigInt(0xff));
+      return bits === 0 || bits === 1 ? (bits as 0 | 1) : null;
+    } catch {
+      return null;
+    }
+  };
+
   return {
     status: status.data !== undefined ? Number(status.data) : undefined,
     isResolved: isResolved.data ?? false,
     isVoided: isVoided.data ?? false,
     payoutNumerators: payoutNumerators.data as readonly bigint[] | undefined,
+    yesSlot: slotOfId(yesId.data),
+    noSlot: slotOfId(noId.data),
     readError: isResolved.error ?? payoutNumerators.error ?? null,
     addressAlive: alive,
   };
@@ -451,8 +499,14 @@ export function useDuelResolution(
     functionName: "resolvedMarketContract",
     query: { enabled: !!duelAddress, refetchInterval: pollMs },
   });
-  const { resolvedMarketAddress: moduleMarket, poolAddress: modulePool, error: moduleError } =
+  const { resolvedMarketAddress: moduleMarket, poolAddress: modulePool, yesSlot: modYes, noSlot: modNo, error: moduleError } =
     useResolvedMarketAddress(marketId, pollMs);
+  // Slot sources, in trust order: (1) the EFFECTIVE market contract's own
+  // yesId()/noId() — the very contract whose payout vector we read; (2) the
+  // module registry record. With neither, slotsKnown=false and NO winner may
+  // be declared: assuming [Yes@0] is precisely what paid the wrong side on
+  // Somnia testnet (these markets settle [No@0, Yes@1]).
+  const moduleSlotsKnown = modYes !== null && modNo !== null && modYes !== modNo;
 
   const isUsable = (a: unknown): a is Address =>
     typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a) &&
@@ -508,20 +562,31 @@ export function useDuelResolution(
   const payoutsRaw = effectiveStatus?.payoutNumerators;
   const p0 = payoutsRaw?.[0] ?? BigInt(0);
   const p1 = payoutsRaw?.[1] ?? BigInt(0);
+  // payouts[yesSlot] pays the YES/Up side (playerA), payouts[noSlot] the
+  // NO/Down side (playerB) — slots taken from the market itself.
+  const effYes = effectiveStatus?.yesSlot ?? null;
+  const effNo = effectiveStatus?.noSlot ?? null;
+  const slotsKnown =
+    (effYes !== null && effNo !== null && effYes !== effNo) || moduleSlotsKnown;
+  const yesSlot = effYes ?? (moduleSlotsKnown ? (modYes as 0 | 1) : 0);
+  const noSlot = effNo ?? (moduleSlotsKnown ? (modNo as 0 | 1) : 1);
+  const arr = payoutsRaw ?? [];
+  const pYes = (arr[yesSlot] ?? BigInt(0)) as bigint;
+  const pNo = (arr[noSlot] ?? BigInt(0)) as bigint;
   const hasFinalizedPayouts =
     !!payoutsRaw && payoutsRaw.length >= 2 &&
-    ((p0 > BigInt(0) && p1 === BigInt(0)) ||
-      (p1 > BigInt(0) && p0 === BigInt(0)) ||
-      (p0 > BigInt(0) && p0 === p1));
+    ((pYes > BigInt(0) && pNo === BigInt(0)) ||
+      (pNo > BigInt(0) && pYes === BigInt(0)) ||
+      (pYes > BigInt(0) && pYes === pNo));
   // Both sides live & unequal → the market is quoting, not settling.
   const ambiguousPayoutVector =
     !!payoutsRaw && payoutsRaw.length >= 2 &&
-    p0 > BigInt(0) && p1 > BigInt(0) && p0 !== p1;
+    pYes > BigInt(0) && pNo > BigInt(0) && pYes !== pNo;
   // A contract answering resolved BEFORE the market's expiry is ignored — the
   // duel settles on DreamDEX's resolution at the deadline, nothing else.
   const isVoided = marketVoided && terminalWindowOpen;
   const isTerminal =
-    ((marketResolved && hasFinalizedPayouts && !ambiguousPayoutVector) || marketVoided) &&
+    ((marketResolved && hasFinalizedPayouts && !ambiguousPayoutVector && slotsKnown) || marketVoided) &&
     terminalWindowOpen;
   // Diagnostic: true when a candidate claimed terminal but we suppressed it
   // because the duel countdown hasn't finished (proves the gate is holding).
@@ -533,9 +598,14 @@ export function useDuelResolution(
   let winnerSide: "up" | "down" | "tie" | null = null;
   const payouts = isTerminal ? effectiveStatus?.payoutNumerators : undefined;
   if (isTerminal && !isVoided && payouts && payouts.length >= 2) {
-    const v0 = payouts[0] ?? BigInt(0);
-    const v1 = payouts[1] ?? BigInt(0);
-    if (v0 > BigInt(0) || v1 > BigInt(0)) winnerSide = v0 === v1 ? "tie" : v0 > BigInt(0) ? "up" : "down";
+    if (pYes > BigInt(0) || pNo > BigInt(0)) winnerSide = pYes === pNo ? "tie" : pYes > pNo ? "up" : "down";
+  }
+  // What the DEPLOYED contract will do (its hardcoded payouts[0] == YES rule).
+  // When this disagrees with winnerSide, settle() pays the wrong player —
+  // surfaced on the duel page as a funds-safety warning instead of a silent lie.
+  let contractWinnerSide: "up" | "down" | "tie" | null = null;
+  if (isTerminal && !isVoided && payouts && payouts.length >= 2) {
+    if (p0 > BigInt(0) || p1 > BigInt(0)) contractWinnerSide = p0 === p1 ? "tie" : p0 > BigInt(0) ? "up" : "down";
   }
 
   return {
@@ -543,6 +613,8 @@ export function useDuelResolution(
     // actually finished (the settlement rule).
     isTerminal,
     terminalWindowOpen,
+    slotsKnown,
+    contractWinnerSide,
     claimsResolvedPrematurely,
     // isResolved() answered true but the payout vector isn't finalized yet —
     // we keep waiting instead of declaring. (Dev-visible diagnostic.)

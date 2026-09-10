@@ -84,8 +84,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Store the RAW blob URL (full, no token) — the GET proxy re-reads it
-    // server-side through the same auth ladder we verify below.
+    // Store the RAW blob URL (full, no token) — the GET proxy re-reads the
+    // bytes server-side via the SDK's authenticated get(), verified below.
     const saved = await updateProfilePfp(addr, blob.url);
     if (!saved) {
       console.error("PFP upload: DB save failed for", addr);
@@ -96,14 +96,15 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Server-side self-verification ────────────────────────────
-    // Read the image back through the SAME mechanism the GET proxy uses. The
-    // success toast is only allowed once this passes.
-    const readback = await fetchBlobServerSide(blob.url);
+    // Read the image back through the SAME mechanism the GET proxy uses
+    // (SDK get() with Authorization: OIDC/RW-token header auth for this
+    // private store). The success toast is only allowed once this passes.
+    const readback = await fetchBlobServerSide(pathname);
     if (!readback) {
       return NextResponse.json(
         {
-          error: "Image stored but not readable server-side yet — check Vercel Blob store access",
-          detail: { path: pathname, url: blob.url, note: "all auth modes failed or non-image content-type" },
+          error: "Image stored but not readable server-side yet — the Blob store rejected the authenticated read",
+          detail: { path: pathname, url: blob.url, size: file.size, type: file.type },
         },
         { status: 502 }
       );
@@ -114,7 +115,8 @@ export async function POST(req: NextRequest) {
       path: pathname,
       proxyUrl: `/api/pfp/${addr}`,
       verified: true,
-      via: readback.attempt.mode,
+      bytes: readback.bytes.byteLength,
+      contentType: readback.contentType,
     });
   } catch (e: any) {
     console.error("PFP upload error:", e);

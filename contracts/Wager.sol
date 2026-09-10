@@ -142,10 +142,21 @@ contract Wager {
 
         uint256[] memory p = market.payoutNumerators();
         require(p.length >= 2, "bad payout");
-        require(p[0] != 0 || p[1] != 0, "no payout set");
+
+        // The payout vector is indexed by OUTCOME SLOT, and each outcome's slot
+        // is the low byte of the market's own yesId/noId. Assuming payouts[0]
+        // == YES is what paid the wrong player on Somnia testnet (these markets
+        // settle [No, Yes]: verified on duels 0x267AAFb3… and 0x651d5be6…, 2026-09-10).
+        uint256 yesSlot = uint8(uint256(market.yesId()));
+        uint256 noSlot = uint8(uint256(market.noId()));
+        require(yesSlot < p.length && noSlot < p.length && yesSlot != noSlot, "bad slots");
+
+        uint256 pYes = p[yesSlot];
+        uint256 pNo = p[noSlot];
+        require(pYes != 0 || pNo != 0, "no payout set");
 
         // Split/void result: both outcomes paid equally → refund both players
-        if (p[0] == p[1]) {
+        if (pYes == pNo) {
             _executeRefund();
             return;
         }
@@ -153,7 +164,9 @@ contract Wager {
         state = WagerState.SETTLED;
 
         uint256 pot = address(this).balance;
-        address winner = (p[0] > 0) ? playerA : playerB;
+        // Convention (factory-enforced): playerA is the market's YES side
+        // (creator stakes the "above" leg; joiner takes NO).
+        address winner = (pYes > pNo) ? playerA : playerB;
 
         if (feeBps > 0 && feeRecipient != address(0)) {
             uint256 fee = (pot * feeBps) / 10000;

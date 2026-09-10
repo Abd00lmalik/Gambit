@@ -426,11 +426,19 @@ export default function CreateDuelPage() {
               <LiveChart asset={asset} strike={strike} currentPrice={currentPrice?.price ?? strike} intervalMinutes={Math.round((INTERVAL_SEC[selectedInterval] ?? 900) / 60)} />
             </motion.div>
 
-            {/* Side picker */}
+            {/* Side picker — locked to Up for now. The deployed escrow stores no
+                side: playerA (creator) IS the market's YES/“above” leg, and the
+                joiner takes NO. Offering "Down" would mislabel the position
+                relative to what settle() actually pays. Unlocked when the
+                contract stores creator side (next Wager deploy). */}
             <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
               <label className="font-body text-xs uppercase tracking-wider text-gray-400 mb-2 block">Your Side</label>
               <div className="grid grid-cols-2 gap-3">
                 <button
+                  type="button"
+                  disabled
+                  aria-pressed="true"
+                  title="Creator always stakes the market’s YES (above) leg — the joiner takes NO"
                   onClick={() => setSide("UP")}
                   className={`min-h-[56px] flex items-center justify-center gap-2 rounded-xl border p-4 font-display text-base font-bold transition-all duration-200 cursor-pointer ${
                     side === "UP"
@@ -442,12 +450,11 @@ export default function CreateDuelPage() {
                   <span>Up {(upProb * 100).toFixed(0)}%</span>
                 </button>
                 <button
+                  type="button"
+                  disabled
+                  title="Side choice is not stored on-chain yet — creator bets the above leg"
                   onClick={() => setSide("DOWN")}
-                  className={`min-h-[56px] flex items-center justify-center gap-2 rounded-xl border p-4 font-display text-base font-bold transition-all duration-200 cursor-pointer ${
-                    side === "DOWN"
-                      ? "border-down bg-down/10 text-down shadow-lg shadow-down/10"
-                      : "border-white/10 bg-white/[0.03] text-gray-300 hover:border-down/30"
-                  }`}
+                  className="min-h-[56px] flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-4 font-display text-base font-bold text-gray-500 opacity-50 cursor-not-allowed"
                 >
                   <span className="text-xl">▼</span>
                   <span>Down {((1 - upProb) * 100).toFixed(0)}%</span>
