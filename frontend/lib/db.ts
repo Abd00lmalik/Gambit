@@ -111,7 +111,12 @@ export async function getOrCreateProfile(
  * (e.g. "pfps/0xabc….jpeg"), so the proxy never has to guess extensions.
  * Returns null when no profile/blob is stored (or DB is unavailable).
  */
-export async function getPfpBlobPath(address: string): Promise<string | null> {
+/**
+ * The raw stored `pfp_url` for a wallet: a FULL blob URL for rows written by
+ * the current upload route, a legacy "/api/pfp/<addr>" placeholder for interim
+ * rows, or null. Consumers decide how to interpret it.
+ */
+export async function getPfpBlobUrl(address: string): Promise<string | null> {
   if (!supabase) return null;
   const addr = address.toLowerCase();
   try {
@@ -121,18 +126,10 @@ export async function getPfpBlobPath(address: string): Promise<string | null> {
       .eq("address", addr)
       .limit(1)
       .maybeSingle();
-
     const url = (data as { pfp_url?: string | null } | null)?.pfp_url;
-    if (!url) return null;
-    try {
-      const parsed = new URL(url);
-      const pathname = decodeURIComponent(parsed.pathname).replace(/^\//, "");
-      return pathname.startsWith("pfps/") ? pathname : null;
-    } catch {
-      return null;
-    }
+    return url ?? null;
   } catch (e) {
-    console.warn("getPfpBlobPath failed:", e);
+    console.warn("getPfpBlobUrl failed:", e);
     return null;
   }
 }

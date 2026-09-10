@@ -1,35 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDownloadUrl } from "@vercel/blob";
-import { getPfpBlobPath } from "@/lib/db";
+import { head } from "@vercel/blob";
+import { getPfpBlobUrl } from "@/lib/db";
+import { fetchBlobServerSide } from "@/lib/pfp";
 
-// Probe order for the legacy path-less fallback — includes `jpeg` (previously
-// missing, which made .jpeg uploads 404 forever) and lowercase-only names.
+// Legacy fallback probe set (covers pre-canonicalization uploads that stored
+// the raw filename extension, e.g. .jpeg).
 const PROBE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
-const CONTENT_TYPES: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  webp: "image/webp",
-  gif: "image/gif",
-};
 
-async function serveBlob(pathname: string): Promise<NextResponse | null> {
+async function resolveHeadUrl(pathname: string): Promise<string | null> {
   try {
-    const url = getDownloadUrl(pathname);
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return null;
-    const buffer = Buffer.from(await res.arrayBuffer());
-    const ext = pathname.split(".").pop() ?? "jpg";
-    return new NextResponse(buffer, {
-      headers: {
-        "Content-Type": CONTENT_TYPES[ext] ?? "application/octet-stream",
-        // Short-lived: images change, and a cached failure must never
-        // outlive the fix (see no-store on the 404 below).
-        "Cache-Control": "public, max-age=60",
-      },
-    });
+    const meta = await head(pathname);
+    return meta?.url ?? null;
   } catch {
-    return null;
+    return null; // not found / store error — try next
   }
 }
 
@@ -38,30 +21,54 @@ export async function GET(
   { params }: { params: { address: string } }
 ) {
   const address = params.address.toLowerCase();
+  const trace: string[] = [];
 
-  // 1) Authoritative: the exact blob path recorded on the profile at upload time.
-  const storedPath = await getPfpBlobPath(address);
-  if (storedPath) {
-    const served = await serveBlob(storedPath);
-    if (served) return served;
+  // 1) Authoritative: the exact blob URL recorded on the profile at upload
+  //    time (full URL for rows written by the current POST).
+  const stored = await getPfpBlobUrl(address);
+  if (stored) {
+    if (stored.startsWith("http")) {
+      trace.push("db-url");
+      const hit = await fetchBlobServerSide(stored);
+      if (hit) return serve(hit);
+      trace.push("db-url:unreadable");
+    } else {
+      // Interim rows stored the proxy path itself ("/api/pfp/<addr>") —
+      // deterministic layout lets us rebuild the blob path.
+      trace.push("db:proxy-path");
+    }
   }
 
-  // 2) Fallback (no DB row / DB down): probe every accepted extension.
+  // 2) Fallback: probe the deterministic paths via head() to obtain real blob
+  //    URLs (works even when the DB is down or holds a legacy value).
   for (const ext of PROBE_EXTS) {
-    const served = await serveBlob(`pfps/${address}.${ext}`);
-    if (served) return served;
+    const pathname = `pfps/${address}.${ext}`;
+    const url = await resolveHeadUrl(pathname);
+    if (!url) continue;
+    trace.push(`probe:${ext}`);
+    const hit = await fetchBlobServerSide(url);
+    if (hit) return serve(hit);
+    trace.push(`probe:${ext}:unreadable`);
   }
 
   // Explicitly uncached, so a retry right after an upload is never served
-  // from a stale 404. The JSON body doubles as a diagnostic: open this URL
-  // directly to see exactly which link failed (no DB path? blob unreadable?).
+  // from a stale 404. The JSON body doubles as a diagnostic.
   return NextResponse.json(
-    {
-      error: "PFP not found",
-      address,
-      storedPath: storedPath ?? null,
-      probed: storedPath ? PROBE_EXTS.map((e) => `pfps/${address}.${e}`) : [storedPath].filter(Boolean),
-    },
+    { error: "PFP not found", address, stored, trace },
     { status: 404, headers: { "Cache-Control": "no-store" } }
   );
+}
+
+function serve(hit: { res: Response; attempt: { mode: string; status: number; type?: string | null } }) {
+  return hit.res.arrayBuffer().then((buf) => {
+    return new NextResponse(buf, {
+      headers: {
+        "Content-Type": hit.attempt.type ?? "image/jpeg",
+        // Short-lived: images change, and a cached failure must never
+        // outlive the fix (404s are no-store below).
+        "Cache-Control": "public, max-age=60",
+        "X-Pfp-Served-By": hit.attempt.mode,
+      },
+    });
+  });
 }

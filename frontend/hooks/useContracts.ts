@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect, useRef } from "react";
 import {
+  useBlock,
   useAccount,
   useWriteContract,
   useWaitForTransactionReceipt,
@@ -424,10 +425,25 @@ export function useDuelResolution(
     const id = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 2000);
     return () => clearInterval(id);
   }, []);
-  const nearOrPastExpiry = expirySec ? nowSec >= expirySec - 300 : true;
+  // Prefer the CHAIN clock (block timestamp) over the browser clock — a user's
+  // skewed-forward clock must never open the settlement window early.
+  const chainBlock = useBlock({
+    watch: false,
+    query: { enabled: !!expirySec, refetchInterval: 4_000 },
+  });
+  const clockSec =
+    chainBlock.data?.timestamp !== undefined
+      ? Number(chainBlock.data.timestamp)
+      : expirySec
+        ? undefined // expiry known but chain clock not yet → HOLD, don't trust local clock
+        : nowSec;
+  const nearOrPastExpiry = expirySec && clockSec !== undefined ? clockSec >= expirySec - 300 : !!expirySec;
   const pollMs = nearOrPastExpiry ? 3_000 : 10_000;
-  // 5s of grace for clock skew between our box and the chain.
-  const terminalWindowOpen = !expirySec || nowSec >= expirySec - 5;
+  // Terminality requires (a) the market's expiry is KNOWN (never open the gate
+  // while the indexer row is still loading — that leak is what flashed a wrong
+  // "You Won" pre-resolution), (b) the CHAIN clock is past it (5s skew grace).
+  const terminalWindowOpen =
+    !!expirySec && clockSec !== undefined && clockSec >= expirySec - 5;
 
   const stored = useReadContract({
     address: duelAddress,
@@ -485,14 +501,28 @@ export function useDuelResolution(
   // Some market builds report isResolved() from the payout DENOMINATOR, which
   // can be non-zero during trading; requiring decided numerators makes the
   // declaration safe against that too.
+  // A FINALIZED binary settlement pays exactly one side: [D,0] or [0,D]
+  // (void/tie = both equal, which settle() refunds). While a market is still
+  // OPEN it can expose a LIVE odds vector like [57…, 43…] — both sides non-zero
+  // and unequal. That must NEVER be able to declare a winner.
   const payoutsRaw = effectiveStatus?.payoutNumerators;
-  const hasDecidedPayouts =
+  const p0 = payoutsRaw?.[0] ?? BigInt(0);
+  const p1 = payoutsRaw?.[1] ?? BigInt(0);
+  const hasFinalizedPayouts =
     !!payoutsRaw && payoutsRaw.length >= 2 &&
-    ((payoutsRaw[0] ?? BigInt(0)) > BigInt(0) || (payoutsRaw[1] ?? BigInt(0)) > BigInt(0));
+    ((p0 > BigInt(0) && p1 === BigInt(0)) ||
+      (p1 > BigInt(0) && p0 === BigInt(0)) ||
+      (p0 > BigInt(0) && p0 === p1));
+  // Both sides live & unequal → the market is quoting, not settling.
+  const ambiguousPayoutVector =
+    !!payoutsRaw && payoutsRaw.length >= 2 &&
+    p0 > BigInt(0) && p1 > BigInt(0) && p0 !== p1;
   // A contract answering resolved BEFORE the market's expiry is ignored — the
   // duel settles on DreamDEX's resolution at the deadline, nothing else.
   const isVoided = marketVoided && terminalWindowOpen;
-  const isTerminal = ((marketResolved && hasDecidedPayouts) || marketVoided) && terminalWindowOpen;
+  const isTerminal =
+    ((marketResolved && hasFinalizedPayouts && !ambiguousPayoutVector) || marketVoided) &&
+    terminalWindowOpen;
   // Diagnostic: true when a candidate claimed terminal but we suppressed it
   // because the duel countdown hasn't finished (proves the gate is holding).
   const claimsResolvedPrematurely = (marketResolved || marketVoided) && !terminalWindowOpen;
@@ -503,9 +533,9 @@ export function useDuelResolution(
   let winnerSide: "up" | "down" | "tie" | null = null;
   const payouts = isTerminal ? effectiveStatus?.payoutNumerators : undefined;
   if (isTerminal && !isVoided && payouts && payouts.length >= 2) {
-    const p0 = payouts[0] ?? BigInt(0);
-    const p1 = payouts[1] ?? BigInt(0);
-    if (p0 > BigInt(0) || p1 > BigInt(0)) winnerSide = p0 === p1 ? "tie" : p0 > BigInt(0) ? "up" : "down";
+    const v0 = payouts[0] ?? BigInt(0);
+    const v1 = payouts[1] ?? BigInt(0);
+    if (v0 > BigInt(0) || v1 > BigInt(0)) winnerSide = v0 === v1 ? "tie" : v0 > BigInt(0) ? "up" : "down";
   }
 
   return {
@@ -516,8 +546,11 @@ export function useDuelResolution(
     claimsResolvedPrematurely,
     // isResolved() answered true but the payout vector isn't finalized yet —
     // we keep waiting instead of declaring. (Dev-visible diagnostic.)
-    resolvedPayoutsPending: marketResolved && !hasDecidedPayouts && terminalWindowOpen,
-    isResolved: marketResolved && hasDecidedPayouts && !marketVoided && terminalWindowOpen,
+    resolvedPayoutsPending: marketResolved && !hasFinalizedPayouts && terminalWindowOpen,
+    // Live-odds payout vector (both sides non-zero, unequal) → market is
+    // quoting, NOT settling. Exposed so the UI can say so explicitly.
+    ambiguousPayoutVector,
+    isResolved: marketResolved && hasFinalizedPayouts && !ambiguousPayoutVector && !marketVoided && terminalWindowOpen,
     isVoided,
     winnerSide,
     payoutNumerators: payouts,

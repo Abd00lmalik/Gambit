@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { put, del, getDownloadUrl } from "@vercel/blob";
-import { updateProfilePfp, getPfpBlobPath } from "@/lib/db";
+import { put, del } from "@vercel/blob";
+import { updateProfilePfp } from "@/lib/db";
+import { fetchBlobServerSide } from "@/lib/pfp";
 
 // Canonical extension per accepted MIME type. The stored extension is derived
 // from the file's MIME type — never from the raw filename — so what we save
-// here always matches what the GET proxy probes (previously `photo.jpeg` /
-// `IMG_0001.JPG` stored paths the proxy couldn't find → placeholder flicker).
+// here always matches what the GET proxy probes.
 const EXT_BY_MIME: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/png": "png",
   "image/webp": "webp",
   "image/gif": "gif",
 };
+
 
 export async function POST(req: NextRequest) {
   try {
@@ -46,11 +47,9 @@ export async function POST(req: NextRequest) {
 
     console.log(`PFP upload: ${addr}, type=${file.type}, size=${file.size}, path=${pathname}`);
 
-    // The project's blob store is configured PRIVATE — asking for "public"
-    // throws "Cannot use public access on a private store". Private is fine:
-    // the GET proxy signs a download URL server-side via getDownloadUrl().
-    // If the store is ever flipped to public, the retry below keeps uploads
-    // working without a code change.
+    // The store is configured PRIVATE; explicit "private" is honored, and if
+    // the store is ever flipped public the retry covers us. put() returns the
+    // canonical full URL (+ signed downloadUrl) we serve through the proxy.
     let blob: Awaited<ReturnType<typeof put>>;
     try {
       blob = await put(pathname, file, {
@@ -60,7 +59,7 @@ export async function POST(req: NextRequest) {
         allowOverwrite: true,
       });
     } catch (e: any) {
-      if (String(e?.message).includes("private")) {
+      if (String(e?.message).toLowerCase().includes("private")) {
         blob = await put(pathname, file, {
           access: "public",
           contentType: file.type,
@@ -74,8 +73,8 @@ export async function POST(req: NextRequest) {
 
     console.log(`PFP blob stored: ${blob.url}`);
 
-    // Remove blobs stored under other extensions for this address so the proxy
-    // can never serve a stale previous image, then persist the exact path.
+    // Remove blobs stored under other extensions so the proxy can never serve
+    // a stale previous image.
     for (const other of Object.values(EXT_BY_MIME)) {
       if (other === ext) continue;
       try {
@@ -85,11 +84,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Store the PROXY path (not the raw blob URL) as pfp_url: on a private
-    // store the raw URL 403s for every browser-side consumer, while the proxy
-    // resolves the exact blob server-side via getDownloadUrl(). getPfpBlobPath
-    // falls through to the deterministic pfps/<addr>.* probe for these rows.
-    const saved = await updateProfilePfp(addr, `/api/pfp/${addr}`);
+    // Store the RAW blob URL (full, no token) — the GET proxy re-reads it
+    // server-side through the same auth ladder we verify below.
+    const saved = await updateProfilePfp(addr, blob.url);
     if (!saved) {
       console.error("PFP upload: DB save failed for", addr);
       return NextResponse.json(
@@ -99,28 +96,15 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Server-side self-verification ────────────────────────────
-    // Read back through the SAME primitives the GET proxy uses
-    // (DB path lookup → getDownloadUrl → fetch). If this succeeds, the
-    // avatar is guaranteed to render everywhere — no optimistic toasts.
-    const diag: Record<string, unknown> = { path: pathname, dbSaved: saved === true };
-    try {
-      const storedPath = await getPfpBlobPath(addr);
-      const readPath = storedPath ?? pathname;
-      const dl = getDownloadUrl(readPath);
-      const back = await fetch(dl, { signal: AbortSignal.timeout(5000) });
-      diag.storedPath = storedPath;
-      diag.readbackStatus = back.status;
-      diag.readbackType = back.headers.get("content-type");
-      if (!back.ok || !(back.headers.get("content-type") ?? "").startsWith("image/")) {
-        return NextResponse.json(
-          { error: "Image saved but not readable back yet — check Vercel Blob store access", detail: diag },
-          { status: 502 }
-        );
-      }
-    } catch (e: any) {
-      diag.readbackError = String(e?.message ?? e).slice(0, 160);
+    // Read the image back through the SAME mechanism the GET proxy uses. The
+    // success toast is only allowed once this passes.
+    const readback = await fetchBlobServerSide(blob.url);
+    if (!readback) {
       return NextResponse.json(
-        { error: "Image saved but readback failed (blob or DB unreachable from server)", detail: diag },
+        {
+          error: "Image stored but not readable server-side yet — check Vercel Blob store access",
+          detail: { path: pathname, url: blob.url, note: "all auth modes failed or non-image content-type" },
+        },
         { status: 502 }
       );
     }
@@ -129,7 +113,8 @@ export async function POST(req: NextRequest) {
       pfpUrl: `/api/pfp/${addr}`,
       path: pathname,
       proxyUrl: `/api/pfp/${addr}`,
-      verified: true, // proxy read-back verified against this exact blob
+      verified: true,
+      via: readback.attempt.mode,
     });
   } catch (e: any) {
     console.error("PFP upload error:", e);

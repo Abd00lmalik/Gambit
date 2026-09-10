@@ -609,6 +609,8 @@ export default function DuelPage({ params }: { params: { id: string } }) {
                   ? "Locating market contract on-chain…"
                   : resolution.claimsResolvedPrematurely
                     ? "A market contract reported resolution BEFORE this duel's countdown ended — ignoring it per the settlement rule. Resolution is checked the moment the countdown hits zero."
+                    : resolution.ambiguousPayoutVector
+                    ? "Market is still quoting (live payout vector — no side finalized) — waiting for DreamDEX settlement…"
                     : resolution.resolvedPayoutsPending
                     ? "Market reports resolved; waiting for the settlement payout vector…"
                     : resolution.anyCandidateAlive
@@ -617,7 +619,8 @@ export default function DuelPage({ params }: { params: { id: string } }) {
               </p>
               {process.env.NODE_ENV !== "production" && (
                 <p className="font-mono text-[10px] text-gray-500 mt-2">
-                  candidates: {resolution.candidates.map((c) => c.label).join(" | ") || "none"}
+                  candidates: {resolution.candidates.map((c) => `${c.label}${c.addr === resolution.effectiveMarketAddress ? " (effective)" : ""}`).join(" | ") || "none"}
+                  eff: {resolution.effectiveMarketAddress ? `${resolution.effectiveMarketAddress.slice(0, 10)}…` : "—"}
                   {resolution.moduleError ? ` · module: ${String((resolution.moduleError as Error)?.message || "").slice(0, 80)}` : ""}
                   {resolution.storedReadError ? ` · stored: ${String((resolution.storedReadError as Error)?.message || "").slice(0, 80)}` : ""}
                 </p>
