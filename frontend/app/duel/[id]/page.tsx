@@ -325,7 +325,9 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             <span className="font-body text-xs text-gray-400">Resolves in</span>
             <CountdownTimer targetTimestamp={marketData.expiry} size="lg" variant="resolve" />
             {effectiveIsResolved && (
-              <span className="font-body text-sm text-up">Market resolved — claim below</span>
+              <span className={`font-body text-sm ${isVoided ? "text-yellow-400" : "text-up"}`}>
+                {isVoided ? "Market voided — refund below" : "Market resolved — claim below"}
+              </span>
             )}
           </motion.div>
         )}
