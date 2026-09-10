@@ -260,6 +260,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             asset={marketData?.asset ?? "BTC"}
             strike={marketData?.openingPrice ?? 0}
             currentPrice={prices.find(p => p.asset === (marketData?.asset ?? "BTC"))?.price}
+            intervalMinutes={marketData?.intervalSec ? Math.round(marketData.intervalSec / 60) : undefined}
           />
         </motion.div>
 

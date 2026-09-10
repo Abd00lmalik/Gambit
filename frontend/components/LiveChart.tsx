@@ -21,8 +21,9 @@ import {
 // them into 1-minute candles; the previous version requested `order_by asc`
 // with a limit, which returned the OLDEST 200 rows in the table.
 const PRICE_FEED_URL = "https://price-feed.prd.oracle.somnia.host/v1/graphql";
-const TICK_LIMIT = 1000;
-const MAX_CANDLES = 480;
+const TICK_PAGE = 1000; // rows per GraphQL request (server page cap)
+const MAX_PAGES = 8; // ≤ 8 000 raw ticks deep
+const MAX_CANDLES = 1440; // up to 24h of 1-minute candles
 const POLL_MS = 5000;
 
 interface LiveChartProps {
@@ -31,6 +32,9 @@ interface LiveChartProps {
   currentPrice?: number;
   showOverlay?: boolean;
   compact?: boolean;
+  /** Duel length in minutes — history is deepened to ~3× this so the chart
+   *  shows the run-up to the strike, not just the last few minutes of ticks. */
+  intervalMinutes?: number;
 }
 
 function feedIdFor(asset: string): string {
@@ -39,10 +43,16 @@ function feedIdFor(asset: string): string {
 
 type Candle = CandlestickData<UTCTimestamp>;
 
-async function fetchTicks(feedId: string, newestFirst: boolean, limit: number): Promise<{ spot: string; blockTimestamp: string }[]> {
+async function fetchTicks(
+  feedId: string,
+  newestFirst: boolean,
+  limit: number,
+  offset = 0
+): Promise<{ spot: string; blockTimestamp: string }[]> {
   const query = `{
     PricePoint(
       limit: ${limit},
+      offset: ${offset},
       order_by: {blockTimestamp: ${newestFirst ? "desc" : "asc"}},
       where: {feed_id: {_eq: "${feedId}"}}
     ) { spot blockTimestamp }
@@ -80,7 +90,7 @@ function bucketCandles(ticks: { spot: string; blockTimestamp: string }[]): Candl
   return arr.slice(-MAX_CANDLES);
 }
 
-export default function LiveChart({ asset, strike, currentPrice, showOverlay = true, compact = false }: LiveChartProps) {
+export default function LiveChart({ asset, strike, currentPrice, showOverlay = true, compact = false, intervalMinutes }: LiveChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -149,12 +159,27 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
     };
   }, []);
 
-  // ── History load (once per asset) ────────────────────────────
+  // ── History load (deep enough for the duel, not just latest ticks) ──
+  // Oracles tick densely, so one 1000-row page can cover only ~20 minutes.
+  // Keep pulling older pages (offset paging) until we span ~3× the duel
+  // interval (min 60m, capped by MAX_PAGES) so the strike has context.
   useEffect(() => {
     let cancelled = false;
+    const wantSec = Math.max((intervalMinutes ?? 60) * 3, 60) * 60;
     (async () => {
       try {
-        const ticks = await fetchTicks(feedIdFor(asset), true, TICK_LIMIT);
+        const feed = feedIdFor(asset);
+        let ticks: { spot: string; blockTimestamp: string }[] = [];
+        let newestSec = 0;
+        for (let page = 0; page < MAX_PAGES; page++) {
+          const rows = await fetchTicks(feed, true, TICK_PAGE, page * TICK_PAGE);
+          if (cancelled) return;
+          if (rows.length === 0) break;
+          if (page === 0) newestSec = Number(rows[0].blockTimestamp) || 0;
+          ticks = ticks.concat(rows);
+          const oldestSec = Number(rows[rows.length - 1].blockTimestamp) || 0;
+          if (rows.length < TICK_PAGE || (newestSec > 0 && oldestSec > 0 && newestSec - oldestSec >= wantSec)) break;
+        }
         if (cancelled) return;
         const candles = bucketCandles(ticks);
         if (candles.length === 0) return; // polling will seed the chart instead
@@ -169,7 +194,7 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
       }
     })();
     return () => { cancelled = true; };
-  }, [asset]);
+  }, [asset, intervalMinutes]);
 
   // ── Live ticks (5s poll, appends/updates the current minute) ──
   const currentPriceRef = useRef<number | undefined>(currentPrice);
@@ -187,7 +212,7 @@ export default function LiveChart({ asset, strike, currentPrice, showOverlay = t
         last.low = Math.min(last.low, price);
         last.close = price;
         series.update(last);
-      } else if (!last || minute > (last.time as number)) {
+      } else if (!last || minute > (last.time as number)) {  // older-than-last ticks are ignored
         const next: Candle = { time: minute, open: price, high: price, low: price, close: price };
         series.update(next);
         lastCandleRef.current = next;

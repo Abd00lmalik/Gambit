@@ -58,17 +58,27 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
       formData.append("address", address);
 
       const res = await fetch("/api/pfp", { method: "POST", body: formData });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        setError(data.error || "Upload failed");
+        const detail = data?.detail ? ` (${JSON.stringify(data.detail)})` : "";
+        setError(`${data?.error || "Upload failed"}${detail}`);
         return;
       }
 
-      // Upload + DB write are confirmed complete (the POST only returns 200
-      // after BOTH succeed). Start verifying the proxy URL; preview stays up
-      // until it loads. Cache-buster defeats any earlier cached 404/image.
-      setPendingProxyUrl(`/api/pfp/${addrLower}?t=${Date.now()}`);
+      if (data?.verified && data?.proxyUrl) {
+        // The POST only returns 200 after blob write + DB save + a real
+        // readback through the same path the proxy serves from. The image is
+        // provably live — switch to it immediately, no flicker window.
+        setVerifiedUrl(`${data.proxyUrl}?t=${Date.now()}`);
+        setPendingProxyUrl(null);
+        setPreview(null);
+        setError(null);
+      } else {
+        // Older/unverified response path: keep the preview until the proxy
+        // URL itself decodes (retry loop below).
+        setPendingProxyUrl(`/api/pfp/${addrLower}?t=${Date.now()}`);
+      }
       onUploaded?.(data.pfpUrl);
     } catch {
       setError("Upload failed. Try again.");
@@ -105,7 +115,7 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
         // Proxy still failing after retries: the image IS saved (upload + DB
         // both returned success) — keep the local preview for this session so
         // the user sees their new PFP, and tell them the server view lags.
-        setError("Saved. Image takes a moment to appear for others — refresh shortly.");
+        setError("Saved, but the image endpoint can't serve it yet — open /api/pfp/" + addrLower + " to see why.");
       }
     };
     img.src = pendingProxyUrl;

@@ -369,14 +369,12 @@ export function useMarketStatus(marketAddress: Address | undefined) {
     query: { enabled: !!marketAddress, refetchInterval: 10_000 },
   });
 
-  // A candidate is "alive" when at least one of its reads returned data. Reverting
-  // reads (no code / wrong contract) leave every `data` undefined → alive=false,
-  // which is how we tell "not resolved yet" apart from "wrong address".
+  // "Alive" means the address actually speaks the market interface: at least one
+  // of isResolved()/payoutNumerators() answered (true OR false). A contract that
+  // merely has some unrelated status() (e.g. a collateral pool) is NOT treated
+  // as a market — it must answer the exact functions Wager.settle() requires.
   const alive =
-    !!marketAddress &&
-    (isResolved.data !== undefined ||
-      payoutNumerators.data !== undefined ||
-      status.data !== undefined);
+    !!marketAddress && (isResolved.data !== undefined || payoutNumerators.data !== undefined);
 
   return {
     status: status.data !== undefined ? Number(status.data) : undefined,
@@ -398,7 +396,12 @@ export function useMarketStatus(marketAddress: Address | undefined) {
  *   3. BinaryMarketsModule `markets(marketId)[9]` (pool fallback — the "Era 3"
  *      path where index 8 had no code; matches Wager._resolveMarketContract).
  *
- * A candidate whose isResolved()/payoutNumerators() revert is skipped silently.
+ * Only the FIRST candidate that actually answers `isResolved()`/`payoutNumerators()`
+ * is the effective market — same pick settle() makes (`stored`, else module market,
+ * else pool when the market slot had no code). A candidate reverting those reads
+ * is skipped. A non-zero payout vector is NOT treated as resolution: markets
+ * expose live payout vectors while trading (that heuristic is what declared a
+ * winner before the market ever resolved).
  */
 export function useDuelResolution(
   duelAddress: Address | undefined,
@@ -438,43 +441,47 @@ export function useDuelResolution(
   const s2 = useMarketStatus(candidates[2]?.addr);
   const statuses = [s0, s1, s2].slice(0, candidates.length);
 
-  // "Resolved" per any candidate that answered — same test settle() applies:
-  // isResolved() true, or a non-zero payout vector present.
-  let resolvedStatus = null as null | (typeof statuses)[number];
-  let resolvedLabel: string | null = null;
+  // The EFFECTIVE market is the first candidate that speaks the market
+  // interface — exactly the pick Wager.settle() makes: stored address if it has
+  // code, else module markets()[8], else the [9] pool (Era-3 layout). Later
+  // candidates are never consulted once one answers; and "resolved" is ONLY
+  // what that market's own isResolved()/isVoided() say.
+  let effectiveStatus: null | (typeof statuses)[number] = null;
+  let effectiveLabel: string | null = null;
   for (let i = 0; i < statuses.length; i++) {
-    const s = statuses[i];
-    const payouts = s.payoutNumerators;
-    const hasPayout = !!payouts && payouts.length >= 2 && (payouts[0] > BigInt(0) || payouts[1] > BigInt(0));
-    if (s.isResolved || hasPayout) {
-      resolvedStatus = s;
-      resolvedLabel = candidates[i].label;
+    if (statuses[i].addressAlive) {
+      effectiveStatus = statuses[i];
+      effectiveLabel = candidates[i].label;
       break;
     }
   }
 
-  const isVoided = resolvedStatus?.isVoided ?? statuses.some((s) => s.isVoided);
+  const marketResolved = effectiveStatus?.isResolved === true;
+  const isVoided = effectiveStatus?.isVoided === true;
+  const isTerminal = marketResolved || isVoided;
 
-  // Winner = argmax(payoutNumerators) — exactly as the markets SDK does
-  // (settlement v3 stores a payout VECTOR; there is no winningOutcome()).
+  // Winner per the contract's own line in settle(): after requiring
+  // market.isResolved() and !isVoided(), payouts equal → refund (tie),
+  // p[0] > 0 → player A (creator/up), else player B (joiner/down).
   let winnerSide: "up" | "down" | "tie" | null = null;
-  if (resolvedStatus?.payoutNumerators && resolvedStatus.payoutNumerators.length >= 2) {
-    const up = resolvedStatus.payoutNumerators[0] ?? BigInt(0);
-    const down = resolvedStatus.payoutNumerators[1] ?? BigInt(0);
-    if (up > BigInt(0) || down > BigInt(0)) winnerSide = up === down ? "tie" : up > down ? "up" : "down";
+  const payouts = isTerminal ? effectiveStatus?.payoutNumerators : undefined;
+  if (isTerminal && !isVoided && payouts && payouts.length >= 2) {
+    const p0 = payouts[0] ?? BigInt(0);
+    const p1 = payouts[1] ?? BigInt(0);
+    if (p0 > BigInt(0) || p1 > BigInt(0)) winnerSide = p0 === p1 ? "tie" : p0 > BigInt(0) ? "up" : "down";
   }
 
   return {
-    // terminal = market reached a final state (resolved OR voided);
-    // isResolved additionally requires a winner vector (voided → refund path).
-    isTerminal: resolvedStatus !== null,
-    isResolved: resolvedStatus !== null && !isVoided,
+    // terminal = the market itself reached a final state (resolved OR voided).
+    isTerminal,
+    isResolved: marketResolved && !isVoided,
     isVoided,
     winnerSide,
-    payoutNumerators: resolvedStatus?.payoutNumerators,
+    payoutNumerators: payouts,
     candidates,
-    // Which candidate answered resolved (null = none yet). Surfaced for debugging.
-    resolvedVia: resolvedLabel,
+    // Which candidate is the effective market (null = none alive yet). Surfaced for debugging.
+    resolvedVia: effectiveLabel,
+    effectiveMarketAddress: effectiveStatus ? candidates.find((c) => c.label === effectiveLabel)?.addr : undefined,
     moduleError: moduleError ?? null,
     storedReadError: stored.error ?? null,
     anyCandidateAlive: statuses.some((s) => s.addressAlive),

@@ -53,9 +53,15 @@ export async function GET(
   }
 
   // Explicitly uncached, so a retry right after an upload is never served
-  // from a stale 404.
+  // from a stale 404. The JSON body doubles as a diagnostic: open this URL
+  // directly to see exactly which link failed (no DB path? blob unreadable?).
   return NextResponse.json(
-    { error: "PFP not found" },
+    {
+      error: "PFP not found",
+      address,
+      storedPath: storedPath ?? null,
+      probed: storedPath ? PROBE_EXTS.map((e) => `pfps/${address}.${e}`) : [storedPath].filter(Boolean),
+    },
     { status: 404, headers: { "Cache-Control": "no-store" } }
   );
 }
