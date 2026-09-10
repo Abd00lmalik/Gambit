@@ -150,6 +150,17 @@ contract Wager {
         require(market.isResolved(), "not resolved");
         require(!market.isVoided(), "voided use refund()");
 
+        // ── Anti-premature-settlement guard ────────────────
+        // DreamDEX Market contracts report isResolved() == true with placeholder
+        // payouts ([1e7, 0]) WHILE THE MARKET IS STILL TRADING (verified on-chain
+        // 2026-09-10: five Trading markets all returned isResolved=true /
+        // [10000000,0]). Settling on that data pays the wrong player. The market
+        // can only be final after its expiry timestamp (module record index 13).
+        uint64 marketExpiry = _marketExpiry(marketId);
+        if (marketExpiry != 0) {
+            require(block.timestamp >= marketExpiry, "market not final");
+        }
+
         uint256[] memory p = market.payoutNumerators();
         require(p.length >= 2, "bad payout");
         require(p[0] != 0 || p[1] != 0, "no payout set");
@@ -219,6 +230,22 @@ contract Wager {
         address poolAddr;
         assembly { poolAddr := mload(add(result, 320)) } // index 9 = pool
         return poolAddr;
+    }
+
+    /// @dev Read the market's expiry timestamp (module record index 13).
+    ///      Returns 0 when the module is unavailable (tests) — callers treat 0 as
+    ///      "expiry unknown, skip the guard" so local MockMarket tests keep working.
+    function _marketExpiry(bytes32 _marketId) internal view returns (uint64 expiry) {
+        uint256 moduleCodeSize;
+        assembly { moduleCodeSize := extcodesize(BINARY_MARKETS_MODULE) }
+        if (moduleCodeSize == 0) return 0;
+
+        (bool ok, bytes memory result) = BINARY_MARKETS_MODULE.staticcall(
+            abi.encodeWithSignature("markets(bytes32)", _marketId)
+        );
+        if (!ok || result.length < 448) return 0; // need 14 fields (index 13)
+
+        assembly { expiry := mload(add(result, 448)) } // index 13 = expiry
     }
 
     /// @dev Check if an address has contract code deployed.

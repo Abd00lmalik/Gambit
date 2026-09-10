@@ -1,0 +1,194 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import "forge-std/Test.sol";
+import {Wager} from "../contracts/Wager.sol";
+import {GambitFactory} from "../contracts/GambitFactory.sol";
+
+/// @dev Mock DreamDEX market that REPRODUCES the premature-resolution bug:
+///      isResolved() returns true and payoutNumerators() returns the placeholder
+///      [1e7, 0] even while the market is still trading. (Verified on-chain
+///      2026-09-10 — five live Trading markets all reported isResolved=true.)
+contract LyingMockMarket {
+    bool private _genuinelyResolved;
+    uint256[] private _payouts;
+
+    constructor() {
+        _payouts = new uint256[](2);
+        _payouts[0] = 10_000_000; // placeholder — same shape as live DreamDEX markets
+        _payouts[1] = 0;
+    }
+
+    function genuinelyResolve(uint256 up, uint256 down) external {
+        _genuinelyResolved = true;
+        _payouts[0] = up;
+        _payouts[1] = down;
+    }
+
+    function isResolved() external view returns (bool) { return true; } // lies pre-expiry
+    function isVoided() external view returns (bool) { return false; }
+    function payoutNumerators() external view returns (uint256[] memory) { return _payouts; }
+    function status() external view returns (uint8) { return _genuinelyResolved ? 4 : 0; }
+}
+
+/// @dev Mock BinaryMarketsModule — deployed at the REAL BINARY_MARKETS_MODULE
+///      address via vm.etch so the Wager's hardcoded staticcall hits it.
+contract MockBinaryMarketsModule {
+    struct MarketRecord {
+        uint256 oracleQuestionId;
+        uint8 outcomeSlotCount;
+        uint8 voidPolicy;
+        address collateral;
+        uint32 originOperatorId;
+        bytes32 originVenueId;
+        address oracleAdapter;
+        address creator;
+        address market;
+        address pool;
+        uint256 yesId;
+        uint256 noId;
+        uint64 tradingStart;
+        uint64 expiry;
+    }
+
+    mapping(bytes32 => MarketRecord) private _records;
+
+    function setRecord(
+        bytes32 marketId,
+        address market,
+        address pool,
+        uint64 expiry
+    ) external {
+        MarketRecord storage r = _records[marketId];
+        r.market = market;
+        r.pool = pool;
+        r.expiry = expiry;
+        r.outcomeSlotCount = 2;
+    }
+
+    function markets(bytes32 marketId) external view returns (MarketRecord memory) {
+        return _records[marketId];
+    }
+}
+
+/// @title Premature-settlement regression tests (Priority 1)
+/// @dev DreamDEX markets expose isResolved()=true + placeholder payouts while
+///      still trading. These tests pin the guard: settle() must refuse until the
+///      market's expiry timestamp (from the module record) has passed.
+contract WagerPrematureSettlementTest is Test {
+    // Same constant as Wager — the address the hardcoded staticcall targets.
+    address constant MODULE = 0x3ecC694Cef705358864a646142ac17A90E29e388;
+
+    GambitFactory public factory;
+    MockBinaryMarketsModule public module;
+    LyingMockMarket public market;
+
+    address public alice = makeAddr("alice");
+    address public bob = makeAddr("bob");
+
+    uint256 constant STAKE = 1 ether;
+    uint256 constant JOIN_DEADLINE_OFFSET = 5 minutes;
+    bytes32 constant MARKET_ID = keccak256("premature-test-market");
+
+    function setUp() public {
+        module = new MockBinaryMarketsModule();
+        // Etch the mock module's runtime code at the real hardcoded address.
+        vm.etch(MODULE, address(module).code);
+
+        market = new LyingMockMarket();
+
+        factory = new GambitFactory(
+            makeAddr("feeRecipient"),
+            250,
+            0.1 ether,
+            100 ether,
+            address(0)
+        );
+    }
+
+    function _createAndJoin(uint64 expiry) internal returns (Wager w) {
+        module.setRecord(MARKET_ID, address(market), address(0), expiry);
+
+        vm.deal(alice, STAKE);
+        vm.prank(alice);
+        address clone = factory.createDuel{value: STAKE}(
+            address(market),
+            MARKET_ID,
+            block.timestamp + JOIN_DEADLINE_OFFSET,
+            true
+        );
+        w = Wager(payable(clone));
+
+        vm.deal(bob, STAKE);
+        vm.prank(bob);
+        (bool sent,) = clone.call{value: STAKE}("");
+        assertTrue(sent);
+        vm.prank(bob);
+        w.join();
+    }
+
+    /// @notice THE regression: market reports isResolved()=true + placeholder
+    ///         payouts BEFORE expiry → settle() must revert, not pay the creator.
+    function test_settle_revertsWhileMarketStillTrading() public {
+        uint64 futureExpiry = uint64(block.timestamp + 30 minutes);
+        Wager w = _createAndJoin(futureExpiry);
+
+        assertTrue(market.isResolved(), "mock market reports resolved (placeholder)");
+        vm.expectRevert("market not final");
+        w.settle();
+
+        // Funds untouched
+        assertEq(address(w).balance, STAKE * 2, "pot must stay escrowed");
+        assertEq(uint8(w.state()), uint8(Wager.WagerState.LOCKED));
+    }
+
+    /// @notice After expiry passes, the placeholder is STILL not trusted — but the
+    ///         oracle has by then written real payouts. When the payouts are the
+    ///         genuine final ones (market.genuinelyResolve), settle pays correctly.
+    function test_settle_succeedsAfterExpiryWithRealPayouts() public {
+        uint64 expiry = uint64(block.timestamp + 10 minutes);
+        Wager w = _createAndJoin(expiry);
+
+        // Oracle finalizes: DOWN won (up=0, down=nonzero)
+        market.genuinelyResolve(0, 10_000_000);
+
+        // Still inside the window → refused
+        vm.expectRevert("market not final");
+        w.settle();
+
+        // Expiry passes → settlement allowed, and pays the DOWN side (bob, opposite creator)
+        vm.warp(expiry + 1);
+        uint256 bobBefore = bob.balance;
+        w.settle();
+        uint256 fee = (STAKE * 2 * 250) / 10000;
+        assertEq(bob.balance - bobBefore, STAKE * 2 - fee, "joiner (DOWN) wins after genuine resolution");
+        assertEq(uint8(w.state()), uint8(Wager.WagerState.SETTLED));
+    }
+
+    /// @notice Zero expiry (no module data) skips the guard — legacy/test behaviour.
+    function test_settle_zeroExpirySkipsGuard() public {
+        module.setRecord(MARKET_ID, address(market), address(0), 0);
+        // remove record entirely: fresh id never set → all-zero record, expiry 0
+        bytes32 freshId = keccak256("never-set-record");
+
+        vm.deal(alice, STAKE);
+        vm.prank(alice);
+        address clone = factory.createDuel{value: STAKE}(
+            address(market),
+            freshId,
+            block.timestamp + JOIN_DEADLINE_OFFSET,
+            true
+        );
+        Wager w = Wager(payable(clone));
+        vm.deal(bob, STAKE);
+        vm.prank(bob);
+        (bool sent,) = clone.call{value: STAKE}("");
+        assertTrue(sent);
+        vm.prank(bob);
+        w.join();
+
+        // No expiry data → guard skipped → placeholder settles (legacy semantics)
+        w.settle();
+        assertEq(uint8(w.state()), uint8(Wager.WagerState.SETTLED));
+    }
+}
