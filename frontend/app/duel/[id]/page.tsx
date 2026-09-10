@@ -159,7 +159,9 @@ export default function DuelPage({ params }: { params: { id: string } }) {
 
   // Creator refund: nobody joined, market resolved (even before deadline)
   // Uses factory.cancelDuel() which is permissionless and works before deadline if market resolved
-  const canCreatorRefund = state === DuelState.CREATED && !hasJoined && isCreator && effectiveIsResolved;
+  // Contract truth: after joinDeadline, factoryCancel() refunds the creator with NO
+  // market dependency; before it, only if the market already resolved.
+  const canCreatorRefund = state === DuelState.CREATED && !hasJoined && isCreator && (deadlinePassed || effectiveIsResolved);
 
   return (
     <div className="min-h-screen py-8 px-4">
@@ -351,8 +353,8 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           transition={{ delay: 0.5 }}
           className="space-y-3"
         >
-          {/* Join button (if not joined and not creator and deadline not passed) */}
-          {!hasJoined && !isCreator && state === DuelState.CREATED && (
+          {/* Join button — only while the join window is open */}
+          {!hasJoined && !isCreator && state === DuelState.CREATED && !deadlinePassed && (
             <button
               disabled={actions.isPending || isChecking}
               onClick={async () => {
@@ -513,11 +515,23 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </div>
           )}
 
-          {/* Creator refund — nobody joined, market resolved */}
+          {/* Expired with no opponent — closed for everyone; creator reclaims below */}
+          {state === DuelState.CREATED && !hasJoined && deadlinePassed && (
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center">
+              <p className="font-display text-lg font-bold text-gray-400">Duel Expired</p>
+              <p className="font-body text-sm text-gray-400 mt-1">
+                {isCreator
+                  ? "Nobody joined before the deadline — your stake can be reclaimed below."
+                  : "Nobody joined and the join window closed. This duel is no longer accepting stakes."}
+              </p>
+            </div>
+          )}
+
+          {/* Creator refund — nobody joined (deadline passed or market resolved) */}
           {canCreatorRefund && !isStuck && (
             <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/5 p-4">
               <p className="font-body text-sm text-yellow-400 font-medium mb-3">
-                Nobody joined this duel and the market has resolved. Reclaim your stake.
+                Nobody joined this duel — the join window closed. Reclaim your stake.
               </p>
               <button
                 disabled={actions.isPending || isChecking}
@@ -555,9 +569,9 @@ export default function DuelPage({ params }: { params: { id: string } }) {
 
           {/* Stuck duel — not the creator */}
           {isStuck && !isCreator && (
-            <div className="rounded-xl border border-down/30 bg-down/5 p-4 text-center">
-              <p className="font-body text-sm text-down">
-                This duel is stuck. The creator needs to recover the funds.
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-center">
+              <p className="font-body text-sm text-gray-400">
+                This duel expired without an opponent. The creator can reclaim the stake.
               </p>
             </div>
           )}
