@@ -311,6 +311,19 @@ export interface MarketVerification {
   expiry?: number;
   clobStatus?: string;
   error?: string;
+  /**
+   * BinaryMarketsModule record expiry for this marketId — INFORMATIONAL ONLY.
+   * DreamDEX marketIds are recycled SLOT ids across successive time windows;
+   * the module record is a one-time slot registration whose expiry/market
+   * addresses do NOT track the currently-active window (verified 2026-09-10:
+   * every live market probed shows a past-window record — that is by design,
+   * not staleness). The live window's timing comes from the DreamDEX indexer /
+   * price-feed pipeline (same source used for opening prices). Never compare
+   * this against the indexer expiry for gating.
+   */
+  moduleExpiry?: number;
+  /** true when the module record reflects an older window than the live one — informational, never blocking */
+  moduleIsPastWindow?: boolean;
 }
 
 export async function verifyMarketAddress(
@@ -339,35 +352,36 @@ export async function verifyMarketAddress(
         return { valid: false, marketId, clobStatus: market.clobStatus, error: `Market is not tradeable (status: ${market.clobStatus})` };
       }
 
-      // On-chain verification: resolve the real Market contract from BinaryMarketsModule,
-      // then check its code and implementation. The raw marketAddress may be a CLOB
-      // reactivity address with no EVM code — that's by DreamDEX design.
+      // On-chain verification: confirm a Market contract exists for this
+      // marketId. The raw marketAddress may be a CLOB reactivity address with
+      // no EVM code — that's by DreamDEX design.
+      //
+      // NOTE (P0 fix): we deliberately DO NOT compare the module record's
+      // expiry against the indexer's. DreamDEX marketIds are recycled slot
+      // ids; the module record is a one-time slot registration that does not
+      // update on window rotation, so module-expiry ≠ live-window-expiry is
+      // the NORMAL state for every market (verified across all live markets
+      // on 2026-09-10). Gating creation on that comparison blocked 100% of
+      // duels. The module expiry is surfaced as informational metadata only.
       if (publicClient) {
         const codeCheck = await verifyMarketImplementation(marketId, publicClient);
         if (!codeCheck.valid) {
           return { valid: false, marketId, expiry: market.expiry, clobStatus: market.clobStatus, error: codeCheck.error };
         }
 
-        // P1: staleness check — the module record must describe THE SAME window
-        // the indexer row describes. DreamDEX recurring series reuse marketIds
-        // and the module record can point at a PAST window's Market contract
-        // (verified 2026-09-10) whose payouts are frozen at that old outcome —
-        // duels created against such records can never settle correctly.
         const moduleExpiry = codeCheck.moduleExpiry;
         const indexerExpiry = Number(market.expiry);
-        if (
-          moduleExpiry != null &&
-          indexerExpiry > 0 &&
-          Math.abs(moduleExpiry - indexerExpiry) > 120
-        ) {
-          return {
-            valid: false,
-            marketId,
-            expiry: market.expiry,
-            clobStatus: market.clobStatus,
-            error: `Stale on-chain market record (module window ends ${new Date(moduleExpiry * 1000).toISOString()}, expected ${new Date(indexerExpiry * 1000).toISOString()}). This market cannot settle — pick the next window.`,
-          };
-        }
+        const moduleIsPastWindow =
+          moduleExpiry != null && indexerExpiry > 0 && moduleExpiry < indexerExpiry;
+
+        return {
+          valid: true,
+          marketId,
+          expiry: market.expiry,
+          clobStatus: market.clobStatus,
+          moduleExpiry,
+          moduleIsPastWindow,
+        };
       }
 
       return { valid: true, marketId, expiry: market.expiry, clobStatus: market.clobStatus };

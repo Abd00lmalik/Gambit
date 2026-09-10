@@ -381,18 +381,19 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           transition={{ delay: 0.5 }}
           className="space-y-3"
         >
-          {/* P1: on-chain market record stale (DreamDEX marketId reuse) — the
-              on-chain contract's frozen payouts disagree with the oracle's real
-              outcome. Settlement must NOT proceed; funds recovery needs the
-              market record refreshed. */}
-          {state === DuelState.LOCKED && (marketRecordStale || oracleVsContractMismatch) && (
-            <div className="rounded-xl border border-down/30 bg-down/5 p-4 text-center">
-              <p className="font-display text-base font-bold text-down mb-1">Settlement unavailable — market record mismatch</p>
+          {/* P1: shown once the oracle outcome is final but on-chain settlement
+              isn't safe. DreamDEX marketIds are recycled slot ids and the
+              on-chain module record is a one-time slot registration (by design
+              it points at an older window), so settling on-chain could pay the
+              OLD window's outcome. Funds stay safely escrowed instead. */}
+          {state === DuelState.LOCKED && effectiveIsResolved && (marketRecordStale || oracleVsContractMismatch) && (
+            <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/5 p-4 text-center">
+              <p className="font-display text-base font-bold text-yellow-400 mb-1">Result verified — escrowed pending settlement path</p>
               <p className="font-body text-xs text-gray-400 leading-relaxed">
-                The on-chain market record for this duel points at a different market window than the one
-                you dueled on (a DreamDEX marketId-reuse bug). The oracle's actual outcome
-                {oracleWinningSide ? ` (${oracleWinningSide} won)` : ""} may differ from the stale on-chain
-                payouts, so on-chain settlement is blocked to protect funds. This duel needs manual recovery.
+                DreamDEX rotated this market slot: the on-chain market record still belongs to an older
+                window, so on-chain settlement could pay the wrong side. The verified outcome
+                {oracleWinningSide ? ` (${oracleWinningSide} won)` : ""} is shown above and your stake stays
+                safely escrowed in the duel contract until settlement for rotated windows is enabled.
               </p>
             </div>
           )}

@@ -150,20 +150,25 @@ contract Wager {
         require(market.isResolved(), "not resolved");
         require(!market.isVoided(), "voided use refund()");
 
-        // ── Anti-premature/stale-settlement guard ──────────
+        // ── Anti-wrong-payout guards ───────────────────────
         // Verified on-chain 2026-09-10:
         //  (1) DreamDEX Market contracts report isResolved() == true with
         //      placeholder payouts ([1e7, 0]) WHILE THE MARKET IS STILL TRADING.
-        //      → never settle before the market's expiry timestamp.
-        //  (2) DreamDEX RECURRING market series reuse marketIds while the
-        //      BinaryMarketsModule record can point at a PAST window's Market
-        //      contract (module expiry 2026-08-11 for a market that expired
-        //      2026-09-10) whose payouts are frozen at that old outcome.
-        //      createDuel() always caps joinDeadline at expiry-60s of the market
-        //      the creator picked, so a genuine record's expiry is within a
-        //      minute of the join deadline. A record expiring DAYS before it is
-        //      stale — refuse to settle (funds stay escrowed rather than paid
-        //      to the wrong player).
+        //      → never settle before the module record's expiry timestamp.
+        //  (2) DreamDEX marketIds are recycled SLOT ids across successive time
+        //      windows, and BinaryMarketsModule.markets() holds a ONE-TIME slot
+        //      registration: its market/pool addresses and expiry do NOT track
+        //      window rotation (this is by design, not staleness — every live
+        //      market shows a past-window record). For a rotated window the
+        //      registered contract's payouts belong to an OLD window, so
+        //      settling against it pays whichever side won that old window
+        //      (frozen [1e7, 0] = UP) — an active wrong-payout/drain vector.
+        //      Refuse instead: funds stay safely escrowed until a settlement
+        //      path for rotated windows exists (a resolver for the CURRENT
+        //      window's Market contract, or an oracle-driven settler).
+        //      NOTE: this also means the expiry check below uses the slot's
+        //      registered expiry — combined with the registration check it is
+        //      conservative by design. Escrow over mispayment, always.
         uint64 marketExpiry = _marketExpiry(marketId);
         if (marketExpiry != 0) {
             require(block.timestamp >= marketExpiry, "market not final");

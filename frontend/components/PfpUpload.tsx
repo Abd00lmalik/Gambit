@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
+import { usePfpImage } from "@/hooks/usePfpImage";
 
 interface PfpUploadProps {
   currentPfp?: string | null;
@@ -58,12 +59,13 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
     }
   };
 
-  // During upload: show local data URL preview (immediate feedback)
-  // After upload: use server proxy with cache-busting timestamp
-  // Before upload: use stored pfp_url via proxy endpoint
+  // P1 fix: display is ADDRESS-derived via the proxy (blob store = source of
+  // truth). The DB record (currentPfp) is no longer required to show the image,
+  // so a Supabase hiccup can't make an upload "not stick" visually.
+  const { src: proxySrc, onError } = usePfpImage(address);
   const displayUrl = preview
     || (uploadedAt > 0 && address ? `/api/pfp/${address.toLowerCase()}?t=${uploadedAt}` : null)
-    || (currentPfp && address ? `/api/pfp/${address.toLowerCase()}` : null);
+    || proxySrc;
 
   return (
     <div className="relative group">
@@ -81,7 +83,9 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
       >
         {displayUrl ? (
           <img
+            key={displayUrl}
             src={displayUrl}
+            onError={onError}
             alt="Profile"
             className="h-20 w-20 rounded-full object-cover border-2 border-teal/30"
           />

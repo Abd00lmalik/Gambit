@@ -224,3 +224,52 @@ if (finalAns && openAns) {
     finalCents >= openCents ? "UP WON (final at or above opening)" : "DOWN WON (final below opening)");
 }
 
+
+// ── 14. Creation checks (post-P0-fix logic) against live markets ──
+// Mirrors verifyMarketAddress() after the P0 fix: indexer row + Trading +
+// module contract exists. The module-vs-indexer expiry comparison is
+// INFORMATIONAL ONLY (module records are slot registrations that don't track
+// window rotation — the normal state for every market).
+console.log("\n#### SECTION 14: CREATION CHECKS ON LIVE MARKETS (post-fix logic)");
+const checkQ = `{
+  Market(where: {marketType: {_eq: "BINARY"}, clobStatus: {_eq: "Trading"}, expiry: {_gt: ${now2 + 120}}}, order_by: {expiry: asc}, limit: 6) {
+    marketAddress marketId asset expiry clobStatus
+  }
+}`;
+const checkData = await gql("https://prd.smk.somnia.host/v1/graphql", checkQ);
+const checkRows = checkData?.data?.Market ?? [];
+let checked = 0;
+let passedCreation = 0;
+const seenKeys = new Set();
+for (const m of checkRows) {
+  const key = `${m.asset}-${m.expiry}`;
+  if (seenKeys.has(key) || checked >= 3) continue;
+  seenKeys.add(key);
+  checked++;
+  const result = { asset: m.asset, checks: {} };
+  result.checks.indexerRow = true;
+  result.checks.clobStatusTrading = m.clobStatus === "Trading";
+  try {
+    const rec = await client.readContract({ address: MODULE, abi: MODULE_ABI2, functionName: "markets", args: [m.marketId] });
+    const zero = "0x0000000000000000000000000000000000000000";
+    const hasCode = rec.market && rec.market !== zero
+      ? ((await client.getCode({ address: rec.market })) || "0x") !== "0x"
+      : false;
+    result.checks.marketContractRegistered = true;
+    result.checks.marketContractHasCode = hasCode;
+    // informational only — never gates creation
+    result.informational_moduleWindowEnds = new Date(Number(rec.expiry) * 1000).toISOString();
+    result.informational_moduleIsPastWindow = Number(rec.expiry) < now2;
+  } catch (e) {
+    result.checks.marketContractRegistered = false;
+  }
+  const allPass = Object.values(result.checks).every(Boolean);
+  if (allPass) passedCreation++;
+  console.log(`  ${allPass ? "PASS" : "FAIL"} ${m.asset} ${m.marketAddress}: ${JSON.stringify(result)}`);
+}
+console.log(`CREATION CHECKS: ${passedCreation}/${checked} live markets pass the (post-fix) creation flow`);
+if (passedCreation < 2 || checked < 2) {
+  console.log("::error::P0 unresolved — fewer than 2 live markets pass creation checks");
+  process.exit(1);
+}
+console.log("P0 creation checks RESOLVED (creation not blocked) ✅");

@@ -106,6 +106,22 @@ jobs:
             });'
       - name: Deploy V30 (side support + hardened settle) + on-chain smoke
         run: set -o pipefail; FACTORY_ADDRESS=0xea5f3130a5ed09929da3e156ec0308c58de6a2e1 node script/deploy-v30.mjs 2>&1 | tee deploy-v30.log
+      - name: Verify creation works on 3 live markets (P0)
+        run: set -o pipefail; node script/verify-creation.mjs 2>&1 | tee verify-creation.log
+      - name: Commit creation-verification log via Contents API
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          touch verify-creation.log
+          b64=$(base64 -w0 verify-creation.log)
+          sha=$(gh api "repos/${{ github.repository }}/contents/verify-creation.log?ref=${{ github.ref }}" --jq .sha 2>/dev/null || echo "")
+          if [ -n "$sha" ]; then
+            payload=$(jq -n --arg msg "ci: creation verification [skip ci]" --arg b "$b64" --arg sha "$sha" '{message:$msg, content:$b, sha:$sha, branch:"${{ github.ref_name }}"}')
+          else
+            payload=$(jq -n --arg msg "ci: creation verification [skip ci]" --arg b "$b64" '{message:$msg, content:$b, branch:"${{ github.ref_name }}"}')
+          fi
+          gh api -X PUT "repos/${{ github.repository }}/contents/verify-creation.log" --input - <<< "$payload" > /dev/null && echo "committed verify-creation.log"
       - name: Redact smoke log (strip tx hashes + private details)
         run: sed -E 's/0x[0-9a-f]{64}/<txhash>/g' deploy-v30.log > deploy-v30.redacted.log && mv deploy-v30.redacted.log deploy-v30.log
       - name: Commit deploy log via Contents API

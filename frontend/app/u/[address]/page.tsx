@@ -7,6 +7,7 @@ import { useAccount } from "wagmi";
 import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
 import { useSupabaseProfile } from "@/hooks/useSupabaseProfile";
 import PfpUpload from "@/components/PfpUpload";
+import { usePfpImage } from "@/hooks/usePfpImage";
 import DisplayNameEdit from "@/components/DisplayNameEdit";
 import StatCounter from "@/components/StatCounter";
 import AssetIcon from "@/components/AssetIcon";
@@ -110,18 +111,8 @@ export default function ProfilePage({
               currentPfp={profile?.pfp_url}
               onUploaded={() => refetchProfile()}
             />
-          ) : profile?.pfp_url ? (
-            <img
-              src={`/api/pfp/${address.toLowerCase()}`}
-              alt="Profile"
-              className="h-20 w-20 rounded-full object-cover border-2 border-teal/30 mb-4"
-            />
           ) : (
-            <div className="h-20 w-20 rounded-full bg-teal/15 border-2 border-teal/30 flex items-center justify-center mb-4">
-              <span className="font-display text-2xl font-bold text-teal">
-                {address.charAt(2).toUpperCase()}
-              </span>
-            </div>
+            <ProfilePfp address={address} />
           )}
 
           <h1 className="font-display text-3xl font-bold text-foam mb-1">
@@ -279,6 +270,28 @@ export default function ProfilePage({
           )}
         </motion.div>
       </div>
+    </div>
+  );
+}
+
+function ProfilePfp({ address }: { address: string }) {
+  const { src, onError } = usePfpImage(address);
+  if (src) {
+    return (
+      <img
+        key={src}
+        src={src}
+        onError={onError}
+        alt="Profile"
+        className="h-20 w-20 rounded-full object-cover border-2 border-teal/30 mb-4"
+      />
+    );
+  }
+  return (
+    <div className="h-20 w-20 rounded-full bg-teal/15 border-2 border-teal/30 flex items-center justify-center mb-4">
+      <span className="font-display text-2xl font-bold text-teal">
+        {address.charAt(2).toUpperCase()}
+      </span>
     </div>
   );
 }
