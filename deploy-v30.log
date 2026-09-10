@@ -1,46 +1,14 @@
-file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:57
-  if (errors.length) throw new Error(errors.map((e) => e.formattedMessage).join("\n"));
-                           ^
+compiled GambitFactory: 11249 bytes of creation code
+deployer: 0x0022EC010030158cC27B283BA640706eDBa6080f
+deployer balance: 45.469692902 STT
+deploy tx: 0x2afda38d77a7f0af460c1149b1663a68c06c2a2cc71b1b14b891a820bb77d8e1
+status: reverted block: 484738528n gasUsed: 9895570n
+file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:100
+if (receipt.status !== "success") throw new Error("deploy reverted on-chain");
+                                        ^
 
-Error: ParserError: Source "../utils/LowLevelCall.sol" not found: File import callback not supported
- --> ../utils/Create2.sol:7:1:
-  |
-7 | import {LowLevelCall} from "./LowLevelCall.sol";
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-
-ParserError: Source "@openzeppelin/contracts/utils/Create2.sol" not found: File import callback not supported
- --> @openzeppelin/contracts/proxy/Clones.sol:6:1:
-  |
-6 | import {Create2} from "../utils/Create2.sol";
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-
-ParserError: Source "@openzeppelin/contracts/utils/Errors.sol" not found: File import callback not supported
- --> @openzeppelin/contracts/proxy/Clones.sol:7:1:
-  |
-7 | import {Errors} from "../utils/Errors.sol";
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-
-ParserError: Source "contracts/Wager.sol" not found: File import callback not supported
- --> contracts/GambitFactory.sol:5:1:
-  |
-5 | import {Wager} from "./Wager.sol";
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-
-ParserError: Source "contracts/interfaces/IBinaryMarketsModule.sol" not found: File import callback not supported
- --> contracts/GambitFactory.sol:6:1:
-  |
-6 | import {IBinaryMarketsModule} from "./interfaces/IBinaryMarketsModule.sol";
-  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-
-    at compileFactory (file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:57:28)
-    at file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:61:22
-    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
-    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
-    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+Error: deploy reverted on-chain
+    at file:///home/runner/work/Gambit/Gambit/script/deploy-v30.mjs:100:41
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
 
 Node.js v22.23.2
