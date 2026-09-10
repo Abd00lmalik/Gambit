@@ -203,7 +203,7 @@ block timestamp fetch failed: Unexpected token '<', "<html>
 #### SECTION 10: PRICE FEED — OPENING (10:15Z) vs EXPIRY (10:30Z) on 2026-09-10
 t=1789035300 (2026-09-10T10:15:00.000Z): [{"t":"2026-09-10T10:14:55.000Z","spotUsd":77970.84999999999},{"t":"2026-09-10T10:14:56.000Z","spotUsd":77970.805},{"t":"2026-09-10T10:14:57.000Z","spotUsd":77970.2}]
 t=1789036200 (2026-09-10T10:30:00.000Z): [{"t":"2026-09-10T10:29:55.000Z","spotUsd":77963.8325},{"t":"2026-09-10T10:29:56.000Z","spotUsd":77963.8325},{"t":"2026-09-10T10:29:57.000Z","spotUsd":77962.74999999999}]
-latest BTC/USDC: [{"spot":"77001795000000000000000","blockTimestamp":"1789045328"}]
+latest BTC/USDC: [{"spot":"77015075000000000000000","blockTimestamp":"1789045557"}]
 #### SECTION 11: ORACLE QUESTION DETAILS
 Question fields: undefined
 OracleQuestion fields: ["bindCount","binds","createdAtBlock","createdAtTimestamp","id","oracleCost","oracleQuestionId","payoutDenominator","payoutNumerators","questionKey","resolvedAt","resolvedAtBlock","reuseCount","scheduler","supersededByQuestionId","voided"]
@@ -211,14 +211,14 @@ OracleQuestion fields: ["bindCount","binds","createdAtBlock","createdAtTimestamp
 #### SECTION 12: MODULE RECORD vs INDEXER EXPIRY (staleness pattern)
 found 4 live markets
 
-LIVE BTC marketAddress=0x26432c7f242f6c28e1035151770342356341eab6 marketId=0x0000000000000000000000000000000000000000000000000000000000003f73
-  indexer: {"marketAddress":"0x26432c7f242f6c28e1035151770342356341eab6","expiry":1789045500,"expiryISO":"2026-09-10T13:05:00.000Z","tradingStartISO":"2026-09-10T13:00:00.000Z","binaryPoolAddress":"0x87ae2ee54d88ee1950b8756b3172054b85594d42"}
-  module:  {"market":"0xB69d10c2d8708a723d27e29f1bBB3c3E57A9Ff53","pool":"0x2AC50247ABE5F021f1a8E6d6D0e9039aEa6BeCa8","expiry":1786501800,"expiryISO":"2026-08-12T02:30:00.000Z","stale":true,"expiryMatchesIndexer":false}
-  binaryPoolAddress probe: {"hasCode":false,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
+LIVE BTC marketAddress=0xb535e1b9771aebad4bcb6214ccd0c35846a53cdb marketId=0x0000000000000000000000000000000000000000000000000000000000003f75
+  indexer: {"marketAddress":"0xb535e1b9771aebad4bcb6214ccd0c35846a53cdb","expiry":1789045800,"expiryISO":"2026-09-10T13:10:00.000Z","tradingStartISO":"2026-09-10T13:05:00.000Z","binaryPoolAddress":"0x363deb12f640de39b0575d158325dad098ba0d02"}
+  module:  {"market":"0x47B9d08aD210c48CB5a34D94Da9748D52a227fa2","pool":"0x2E70ff399C771A7aF71948c550684343021e829D","expiry":1786502700,"expiryISO":"2026-08-12T02:45:00.000Z","stale":true,"expiryMatchesIndexer":false}
+  binaryPoolAddress probe: {"hasCode":true,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
 
-LIVE ETH marketAddress=0xa038d56f0dacad852a28223c737b15ae6cdf68ac marketId=0x0000000000000000000000000000000000000000000000000000000000003f74
-  indexer: {"marketAddress":"0xa038d56f0dacad852a28223c737b15ae6cdf68ac","expiry":1789045500,"expiryISO":"2026-09-10T13:05:00.000Z","tradingStartISO":"2026-09-10T13:00:02.000Z","binaryPoolAddress":"0x4c42f9ef7d0f51b91775d1f8f366e90f75d56c47"}
-  module:  {"market":"0xE7DC83F78A4077c606199a54531389a0402Ea5A1","pool":"0xbf802e78136472Fb8549B1daF9F72b22E38c59B0","expiry":1786502700,"expiryISO":"2026-08-12T02:45:00.000Z","stale":true,"expiryMatchesIndexer":false}
+LIVE ETH marketAddress=0x79ed58b8a29eb73d80fd03bcd58a9c8942ad6b69 marketId=0x0000000000000000000000000000000000000000000000000000000000003f76
+  indexer: {"marketAddress":"0x79ed58b8a29eb73d80fd03bcd58a9c8942ad6b69","expiry":1789045800,"expiryISO":"2026-09-10T13:10:00.000Z","tradingStartISO":"2026-09-10T13:05:00.000Z","binaryPoolAddress":"0xc99109a3d4fe89a4b8f81b0f8d7efb595c6da4e5"}
+  module:  {"market":"0x24c2a4092d2827E5e2b93Ac9bcc3439Ae9C9E804","pool":"0xa6899DA2a4f43defe2dFbCa25e94a601AEB79848","expiry":1786503600,"expiryISO":"2026-08-12T03:00:00.000Z","stale":true,"expiryMatchesIndexer":false}
   binaryPoolAddress probe: {"hasCode":false,"isResolved":"reverted","payoutNumerators":"reverted","expiry":"reverted"}
 
 LIVE BTC marketAddress=0x6b54e9e8748e13c0c1a01391a23b69cff470f714 marketId=0x0000000000000000000000000000000000000000000000000000000000003f71
