@@ -85,7 +85,7 @@ jobs:
       - name: Extract testnet deployer key from handoff doc
         run: |
           # Testnet-only keys, deliberately committed in Gambit/handoff.md by the repo owner.
-          PK=$(grep -oP '0x[0-9a-fA-F]{64}' Gambit/handoff.md | sed -n '2p')
+          PK=$(grep -oP '0x[0-9a-fA-F]{64}' Gambit/handoff.md | sed -n '1p')  # Player A / Owner (45+ STT)
           echo "Derived deployer address:"
           PRIVKEY="$PK" node -e '
             import("viem/accounts").then(async ({ privateKeyToAccount }) => {
@@ -102,7 +102,7 @@ jobs:
               const c = createPublicClient({ transport: http(process.env.RPC) });
               const bal = await c.getBalance({ address: process.env.DEPLOYER });
               console.log("balance:", formatEther(bal), "STT");
-              if (bal < 6000000000000000000n) { console.log("::error::deployer needs >= 6 STT gas (deploy uses 35 STT subscription? no — V30 does not fund subscriptions; 6 STT is ample)"); process.exit(1); }
+              if (bal < 2000000000000000000n) { console.log("::error::deployer needs >= 2 STT gas"); process.exit(1); }
             });'
       - name: Deploy V30 (side support + hardened settle)
         run: |
