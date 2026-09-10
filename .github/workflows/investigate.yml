@@ -1,10 +1,13 @@
-name: On-chain investigation
+name: Gambit CI
 
 on:
   push:
     branches:
       - "arena/**"
   workflow_dispatch: {}
+
+permissions:
+  contents: write
 
 jobs:
   investigate:
@@ -18,12 +21,25 @@ jobs:
       - name: Install viem
         run: npm install --no-audit --no-fund
       - name: Run investigation
-        run: |
-          node script/investigate-duel.mjs 2>&1 | tee investigation-report.md
+        run: node script/investigate-duel.mjs 2>&1 | tee investigation-report.md
       - name: Commit report back to branch
         run: |
           git config user.name "arena-ai-coding-agent[bot]"
           git config user.email "arena-ai-coding-agent[bot]@users.noreply.github.com"
           git add investigation-report.md
-          git commit -m "ci: investigation report [skip ci]"
-          git push origin arena/01a08b4d-gambit
+          git commit -m "ci: investigation report [skip ci]" || echo "nothing to commit"
+          git push origin HEAD:arena/01a08b4d-gambit
+
+  forge-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+      - name: Install node deps (OZ remapping target)
+        run: npm install --no-audit --no-fund
+      - name: Show forge version
+        run: forge --version
+      - name: Run forge tests
+        run: forge test -vvv
