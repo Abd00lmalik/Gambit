@@ -176,9 +176,34 @@ function ArenaContent() {
       return true;
     })
     .sort((a, b) => {
-      if (sort === "newest") return 0;
+      // "Newest" = highest created block (true recency; joinDeadline is not a
+      // recency key). "Highest Stake" = descending stake.
+      if (sort === "newest") return b.createdBlock - a.createdBlock;
       return parseFloat(b.stakeAmount) - parseFloat(a.stakeAmount);
     });
+
+  // ── Infinite scroll: show 6 initially, reveal 3 more per scroll signal ──
+  const [visibleCount, setVisibleCount] = useState(6);
+  useEffect(() => {
+    setVisibleCount(6);
+  }, [filter, sort]);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((n) => (n < filtered.length ? n + 3 : n));
+        }
+      },
+      { rootMargin: "600px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+  const visible = filtered.slice(0, visibleCount);
+  const hasMore = visibleCount < filtered.length;
 
   return (
     <div className="min-h-screen py-8 px-4">
@@ -254,7 +279,7 @@ function ArenaContent() {
         ) : filtered.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <AnimatePresence mode="popLayout">
-              {filtered.map((duel, i) => (
+              {visible.map((duel, i) => (
                 <motion.div
                   key={duel.address}
                   id={`duel-${duel.address.toLowerCase()}`}
@@ -277,6 +302,13 @@ function ArenaContent() {
           </div>
         ) : (
           <EmptyState />
+        )}
+
+        {/* Infinite-scroll sentinel + progress */}
+        {hasMore && !isLoading && (
+          <div ref={sentinelRef} className="flex justify-center py-6">
+            <div className="h-6 w-6 border-2 border-teal border-t-transparent rounded-full animate-spin" />
+          </div>
         )}
       </div>
     </div>

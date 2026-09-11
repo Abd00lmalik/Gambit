@@ -25,7 +25,7 @@ export default function NetworkGuard() {
           </div>
           <div>
             <p className="font-body text-sm font-medium text-yellow-400">
-              Wrong network — switch to Somnia Testnet to continue
+              Wrong network. Switch to Somnia Testnet to continue
             </p>
             {error && (
               <p className="font-body text-xs text-yellow-500/70">{error}</p>

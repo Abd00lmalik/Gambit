@@ -11,10 +11,21 @@ const CHUNK = BigInt(900);
 const MAX_RETRIES_PER_CHUNK = 3;
 const PARALLEL_BATCH = 6;
 const CLONE_READ_BATCH = 20;
-const INITIAL_RANGE = BigInt(10_000);
+// Somnia produces ~10.5 blocks/s and this RPC rejects getLogs spans over 1000
+// blocks, so the INITIAL window only needs to cover fresh duels since the last
+// visit. History older than that is filled in by the progressive backfill
+// below — the old INITIAL_RANGE of 10_000 blocks reached just ~16 minutes
+// back, which is why the Arena appeared capped at a couple of duels.
+const INITIAL_RANGE = BigInt(1_000);
 const POLL_INTERVAL = 30_000;
 const CACHE_KEY = "gambit_last_scanned_block";
+const BACKFILL_KEY = "gambit_backfill_floor";
 const FULL_RESYNC_INTERVAL = 10; // Full resync every N polls
+// Backfill stops here: block where the V30 factory (the oldest one whose duels
+// still use the current DuelCreated signature) was deployed. Everything older
+// came from factories emitting a pre-creatorIsUp event shape we cannot decode.
+export const DUEL_HISTORY_FLOOR_BLOCK = BigInt("484741715");
+const BACKFILL_WAVE = 6; // parallel 900-block chunks per backfill step
 
 export interface OnChainDuel {
   address: Address;
@@ -25,6 +36,8 @@ export interface OnChainDuel {
   joinDeadline: number;
   state: number;
   asset: string;
+  /** Block the DuelCreated log was emitted in — the true recency key. */
+  createdBlock: number;
 }
 
 const DUEL_CREATED_EVENT = {
@@ -158,6 +171,7 @@ function logsToDuels(
       joinDeadline: Number(joinDeadline),
       state: onChain?.state ?? 0,
       asset: assetMap.get((marketAddress as string)?.toLowerCase()) ?? "BTC",
+      createdBlock: Number(log.blockNumber ?? 0),
     };
   });
 }
@@ -167,6 +181,10 @@ export function useDuelCreatedEvents() {
   const [isLoading, setIsLoading] = useState(true);
   const isInitialLoad = useRef(true);
   const lastScannedBlock = useRef<bigint>(BigInt(0));
+  // Backfill walk position: the lowest block already scanned. 0 = not started
+  // (a fresh session starts from the bottom of its initial window).
+  const backfillFloor = useRef<bigint>(BigInt(0));
+  const backfillDone = useRef(false);
   const pollCount = useRef(0);
   const client = usePublicClient({ chainId: somnia.id });
 
@@ -176,6 +194,15 @@ export function useDuelCreatedEvents() {
       const cached = localStorage.getItem(CACHE_KEY);
       if (cached) {
         lastScannedBlock.current = BigInt(cached);
+      }
+      const cachedFloor = localStorage.getItem(BACKFILL_KEY);
+      if (cachedFloor) {
+        const floor = BigInt(cachedFloor);
+        if (floor <= DUEL_HISTORY_FLOOR_BLOCK) {
+          backfillDone.current = true; // a previous session fully backfilled
+        } else {
+          backfillFloor.current = floor; // resume the walk where it stopped
+        }
       }
     } catch {}
   }, []);
@@ -228,7 +255,7 @@ export function useDuelCreatedEvents() {
       const newDuels = logsToDuels(allLogs, stateMap, assetMap);
 
       if (isInitialLoad.current) {
-        setDuels(newDuels.sort((a, b) => b.joinDeadline - a.joinDeadline));
+        setDuels(newDuels.sort((a, b) => b.createdBlock - a.createdBlock));
       } else {
         setDuels((prev) => {
           const existing = new Map(prev.map((d) => [d.address, d]));
@@ -246,6 +273,52 @@ export function useDuelCreatedEvents() {
       isInitialLoad.current = false;
       setIsLoading(false);
     }
+  }, [client]);
+
+  // Progressive history backfill: the initial window only reaches ~16 minutes
+  // back, so older duels stream in afterwards, one small parallel wave per
+  // pass, oldest-first walk downward. Runs between polls until it reaches the
+  // V30 deploy floor, then never again (persisted in localStorage).
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    const runBackfill = async () => {
+      if (backfillDone.current || cancelled) return;
+      // First run of a fresh session: start just below the initial scan window.
+      if (backfillFloor.current === BigInt(0)) {
+        try {
+          const latest = await client.getBlockNumber();
+          backfillFloor.current = latest + BigInt(1) - (lastScannedBlock.current > BigInt(0) ? INITIAL_RANGE : BigInt(0));
+        } catch { return; }
+      }
+      const to = backfillFloor.current - BigInt(1);
+      if (to <= DUEL_HISTORY_FLOOR_BLOCK) {
+        backfillDone.current = true;
+        try { localStorage.setItem(BACKFILL_KEY, DUEL_HISTORY_FLOOR_BLOCK.toString()); } catch {}
+        return;
+      }
+      const from = to - CHUNK * BigInt(BACKFILL_WAVE) + BigInt(1);
+      const logs = await parallelScan(client, from < DUEL_HISTORY_FLOOR_BLOCK ? DUEL_HISTORY_FLOOR_BLOCK : from, to);
+      if (cancelled) return;
+      backfillFloor.current = from < DUEL_HISTORY_FLOOR_BLOCK ? DUEL_HISTORY_FLOOR_BLOCK : from;
+      try { localStorage.setItem(BACKFILL_KEY, backfillFloor.current.toString()); } catch {}
+      if (logs.length === 0) return;
+      const clones = logs.map((log: any) => log.args.clone as Address);
+      const marketAddresses = logs.map((log: any) => log.args.marketAddress as string);
+      const [stateMap, assetMap] = await Promise.all([
+        batchReadDuelStates(client, clones),
+        fetchMarketAssets(marketAddresses),
+      ]);
+      if (cancelled) return;
+      const older = logsToDuels(logs, stateMap, assetMap);
+      setDuels((prev) => {
+        const existing = new Map(prev.map((d) => [d.address, d]));
+        for (const d of older) existing.set(d.address, d);
+        return [...existing.values()].sort((a, b) => b.createdBlock - a.createdBlock);
+      });
+    };
+    const interval = setInterval(runBackfill, 3_000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, [client]);
 
   useEffect(() => {

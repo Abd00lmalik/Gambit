@@ -206,7 +206,7 @@ export default function ProfilePage({
                   ? `${stats.streak}W`
                   : stats.streak < 0
                   ? `${Math.abs(stats.streak)}L`
-                  : "—"}
+                  : "-"}
               </p>
             </div>
             <div>

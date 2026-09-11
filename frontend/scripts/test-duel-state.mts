@@ -151,7 +151,7 @@ function baseInput(overrides: Partial<DuelViewInput> = {}): DuelViewInput {
   const won = duelEndedMessage(resolved, { hasJoined: true, winnerSide: "UP", viewerSide: "UP" });
   const lost = duelEndedMessage(resolved, { hasJoined: true, winnerSide: "UP", viewerSide: "DOWN" });
   const spectator = duelEndedMessage(resolved, { hasJoined: true, winnerSide: "UP", viewerSide: null });
-  assert.match(won, /you won/);
+  assert.match(won, /You won/);
   assert.match(lost, /UP won/);
   assert.match(spectator, /UP won/);
   assert.equal(duelEndedMessage(resolved, { hasJoined: true, winnerSide: null, viewerSide: "UP" }), "The contest has ended.");
@@ -162,7 +162,7 @@ function baseInput(overrides: Partial<DuelViewInput> = {}): DuelViewInput {
 {
   const pending = deriveDuelView(baseInput({ nowSec: 3000 }));
   const msg = duelEndedMessage(pending, { hasJoined: true });
-  assert.match(msg, /waiting for the DreamDEX oracle/);
+  assert.match(msg, /Waiting for the DreamDEX oracle/);
   ok("ended-pending message communicates oracle finalization is pending");
 }
 

@@ -128,24 +128,24 @@ export default function StatsPage() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <StatCard
                   label="Avg Latency"
-                  value={duelStats?.avgLatency ? `${duelStats.avgLatency.toFixed(1)}s` : "—"}
+                  value={duelStats?.avgLatency ? `${duelStats.avgLatency.toFixed(1)}s` : "-"}
                   color="text-teal"
                 />
                 <StatCard
                   label="Fastest"
-                  value={duelStats?.fastestLatency ? `${duelStats.fastestLatency.toFixed(1)}s` : "—"}
+                  value={duelStats?.fastestLatency ? `${duelStats.fastestLatency.toFixed(1)}s` : "-"}
                   color="text-up"
                 />
                 <StatCard
                   label="Slowest"
-                  value={duelStats?.slowestLatency ? `${duelStats.slowestLatency.toFixed(1)}s` : "—"}
+                  value={duelStats?.slowestLatency ? `${duelStats.slowestLatency.toFixed(1)}s` : "-"}
                   color="text-down"
                 />
                 <StatCard
                   label="Success Rate"
                   value={duelStats?.reactiveSettled && duelStats?.totalSettled
                     ? `${((duelStats.reactiveSettled / duelStats.totalSettled) * 100).toFixed(0)}%`
-                    : "—"}
+                    : "-"}
                   color="text-foam"
                 />
               </div>

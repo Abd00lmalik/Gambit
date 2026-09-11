@@ -142,16 +142,16 @@ export function deriveDuelView(input: DuelViewInput): DuelView {
 export function duelEndedMessage(view: DuelView, opts: { hasJoined: boolean; winnerSide?: "UP" | "DOWN" | null; viewerSide?: "UP" | "DOWN" | null }): string {
   switch (view.phase) {
     case "open-expired":
-      return "This duel expired with no opponent — the contest did not happen.";
+      return "This duel expired with no opponent; the contest did not happen.";
     case "ended-resolved":
       if (!opts.hasJoined) return "The contest has ended.";
       if (!opts.winnerSide) return "The contest has ended.";
-      if (!opts.viewerSide) return `Contest ended — ${opts.winnerSide} won.`;
+      if (!opts.viewerSide) return `Contest ended: ${opts.winnerSide} won.`;
       return opts.viewerSide === opts.winnerSide
-        ? `The contest has ended — you won (${opts.winnerSide}).`
-        : `The contest has ended — ${opts.winnerSide} won.`;
+        ? `The contest has ended. You won (${opts.winnerSide}).`
+        : `The contest has ended. ${opts.winnerSide} won.`;
     case "ended-pending":
-      return "The contest window has closed — waiting for the DreamDEX oracle to finalize the result.";
+      return "The contest window has closed. Waiting for the DreamDEX oracle to finalize the result.";
     default:
       return "";
   }

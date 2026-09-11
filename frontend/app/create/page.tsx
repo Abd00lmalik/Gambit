@@ -276,7 +276,7 @@ export default function CreateDuelPage() {
           </h2>
           <p className="font-body text-sm text-gray-400 mb-4">
             {mode === "duel"
-              ? `Your challenge is live${side ? ` — you picked ${side === "UP" ? "▲ Up" : "▼ Down"}, your opponent takes the ${side === "UP" ? "▼ Down" : "▲ Up"} side` : ""}. Share the invite or wait for someone in the Arena to accept.`
+              ? `Your challenge is live${side ? ` (you picked ${side === "UP" ? "▲ Up" : "▼ Down"}, your opponent takes the ${side === "UP" ? "▼ Down" : "▲ Up"} side)` : ""}. Share the invite or wait for someone in the Arena to accept.`
               : "Your squad pool is live. Share the invite link with your group."}
           </p>
 
@@ -381,7 +381,7 @@ export default function CreateDuelPage() {
                       <AssetIcon asset={a} className="h-5 w-5" />
                       <span>{a}</span>
                       <span className="text-xs text-gray-400 font-normal">
-                        ${assetPrice?.price.toLocaleString("en-US", { minimumFractionDigits: 2 }) ?? "—"}
+                        ${assetPrice?.price.toLocaleString("en-US", { minimumFractionDigits: 2 }) ?? "-"}
                       </span>
                     </button>
                   );

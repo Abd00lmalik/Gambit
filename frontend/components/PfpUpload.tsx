@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
-import { usePfpImage } from "@/hooks/usePfpImage";
+import { usePfpImage, notifyPfpUpdated } from "@/hooks/usePfpImage";
 
 interface PfpUploadProps {
   currentPfp?: string | null;
@@ -51,6 +51,9 @@ export default function PfpUpload({ currentPfp, onUploaded }: PfpUploadProps) {
       setUploadedAt(Date.now());
       // Clear preview AFTER setting timestamp, so the proxy URL takes over immediately
       setPreview(null);
+      // Broadcast so EVERY mounted avatar (navbar, cards, duels) refetches the
+      // new blob in the same tick — prevents stale-image flicker elsewhere.
+      notifyPfpUpdated(address);
       onUploaded?.(data.pfpUrl);
     } catch (e) {
       setError("Upload failed. Try again.");

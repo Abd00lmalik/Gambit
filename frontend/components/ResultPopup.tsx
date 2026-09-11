@@ -77,11 +77,11 @@ export default function ResultPopup({ show, kind, pot, onDismiss, onClaim, claim
             {kind === "lost" && <p className="font-body text-sm text-gray-400 mb-1">Better luck next duel.</p>}
             {kind === "refund" && (
               <p className="font-body text-sm text-gray-400 mb-1">
-                Nobody joined before the deadline — your stake is reclaimable.
+                Nobody joined before the deadline. Your stake is reclaimable.
               </p>
             )}
             {kind === "void" && (
-              <p className="font-body text-sm text-gray-400 mb-1">Market split/voided — both stakes are refunded on settle.</p>
+              <p className="font-body text-sm text-gray-400 mb-1">Market split/voided. Both stakes are refunded on settle.</p>
             )}
             <div className="mt-6 flex flex-col gap-2">
               {(kind === "won" || kind === "refund") && onClaim && (

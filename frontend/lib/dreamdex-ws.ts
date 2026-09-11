@@ -31,6 +31,7 @@ const POLL_INTERVAL = 3000;
 
 const stateMap = new Map<string, MarketState>();
 const activeSubs = new Map<string, Set<WsListener>>();
+const inFlight = new Set<string>();
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 function getOrCreateState(key: string): MarketState {
@@ -128,6 +129,39 @@ async function fetchOrderBookBothIndexers(
 }
 
 // ── Global polling loop ────────────────────────────────────────
+// One market poll: fetch both indexers, update state, broadcast to listeners.
+// Guarded by the in-flight set so a slow round-trip never piles up duplicates
+// when the interval ticks mid-request.
+async function pollMarket(marketAddress: string) {
+  const marketKey = marketAddress.toLowerCase();
+  if (inFlight.has(marketKey)) return;
+  inFlight.add(marketKey);
+  try {
+    const listeners = activeSubs.get(marketKey);
+    if (!listeners || listeners.size === 0) return;
+
+    const update = await fetchOrderBookBothIndexers(marketAddress);
+    if (!update) return;
+
+    const listenersAfter = activeSubs.get(marketKey);
+    if (!listenersAfter || listenersAfter.size === 0) return; // unsubscribed mid-fetch
+
+    const state = getOrCreateState(marketKey);
+    state.bestBid = update.bestBid;
+    state.bestAsk = update.bestAsk;
+    state.midPrice = update.midPrice;
+    state.upPercent = update.upPercent;
+    state.downPercent = update.downPercent;
+    state.lastUpdate = update.lastUpdate;
+
+    for (const listener of listenersAfter) {
+      listener(update);
+    }
+  } finally {
+    inFlight.delete(marketKey);
+  }
+}
+
 function startPolling() {
   if (pollTimer) return;
 
@@ -141,21 +175,7 @@ function startPolling() {
     for (const marketAddr of markets) {
       const listeners = activeSubs.get(marketAddr);
       if (!listeners || listeners.size === 0) continue;
-
-      const update = await fetchOrderBookBothIndexers(marketAddr);
-      if (!update) continue;
-
-      const state = getOrCreateState(marketAddr);
-      state.bestBid = update.bestBid;
-      state.bestAsk = update.bestAsk;
-      state.midPrice = update.midPrice;
-      state.upPercent = update.upPercent;
-      state.downPercent = update.downPercent;
-      state.lastUpdate = update.lastUpdate;
-
-      for (const listener of listeners) {
-        listener(update);
-      }
+      void pollMarket(marketAddr);
     }
   }, POLL_INTERVAL);
 }
@@ -177,6 +197,12 @@ export function subscribeOrderBook(
 
   // Start polling if not already
   startPolling();
+
+  // Fire the FIRST poll immediately: previously the first data always waited
+  // for the next interval tick (up to POLL_INTERVAL + fetch time), which made
+  // the sentiment bar crawl in ~3-4s after mount. With the immediate poll,
+  // first paint lands in about one indexer round-trip.
+  void pollMarket(marketKey);
 
   // Broadcast existing state immediately
   broadcastLatest(marketAddress, listener);

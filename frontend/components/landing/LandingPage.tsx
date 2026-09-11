@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, useInView } from "framer-motion";
 import CustomConnectButton from "@/components/CustomConnectButton";
+import LogoMark from "@/components/LogoMark";
+import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
+import { formatEther } from "viem";
 
 /* ═══════════════════════════════════════════════════════
    DATA
@@ -545,6 +548,7 @@ function CountUp({ to, suffix = "", decimals = 0 }: { to: number; suffix?: strin
    ═══════════════════════════════════════════════════════ */
 
 export default function LandingPage() {
+  const { duels } = useDuelCreatedEvents();
   const [activeId, setActiveId] = useState(1);
   const [seatPopover, setSeatPopover] = useState<string | null>(null);
   const [potHint, setPotHint] = useState(false);
@@ -597,7 +601,7 @@ export default function LandingPage() {
       >
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
           <Link href="/" className="flex items-center gap-2.5 group">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#19BEA4] font-display text-sm font-bold text-[#1E2526] transition-colors group-hover:bg-[#22D4B7]">G</div>
+            <LogoMark className="h-8 w-8" />
             <span className="font-display text-lg font-bold text-[#D7FAFC] tracking-tight">Gambit</span>
           </Link>
           <div className="hidden items-center gap-1 md:flex">
@@ -742,17 +746,25 @@ export default function LandingPage() {
       <section className="relative z-10 py-8 px-5 border-t border-white/[0.04]">
         <div className="mx-auto max-w-2xl">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
-              { label: "Duels Fought", to: 156, dec: 0, sfx: "" },
-              { label: "STT Volume", to: 89, dec: 1, sfx: " STT" },
-              { label: "Players", to: 42, dec: 0, sfx: "" },
-              { label: "Win Rate", to: 67, dec: 0, sfx: "%" },
-            ].map((stat) => (
-              <motion.div key={stat.label} initial={{ opacity: 0, y: 6 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-40px" }} className="flex flex-col items-center gap-0.5">
-                <CountUp to={stat.to} suffix={stat.sfx} decimals={stat.dec} />
-                <span className="font-ui text-[10px] uppercase tracking-wider text-gray-500">{stat.label}</span>
-              </motion.div>
-            ))}
+            {(() => {
+              // Real, live in-app stats derived from on-chain duel events.
+              const volume = duels.reduce((s, d) => s + Number(formatEther(BigInt(d.stakeAmount))), 0);
+              const players = new Set<string>();
+              duels.forEach((d) => { players.add(d.playerA.toLowerCase()); players.add(d.playerB.toLowerCase()); });
+              const active = duels.filter((d) => d.state === 1).length;
+              const stats = [
+                { label: "Duels Created", to: duels.length, dec: 0, sfx: "" },
+                { label: "STT Volume", to: volume, dec: 1, sfx: " STT" },
+                { label: "Players", to: players.size, dec: 0, sfx: "" },
+                { label: "Live Duels", to: active, dec: 0, sfx: "" },
+              ];
+              return stats.map((stat) => (
+                <motion.div key={stat.label} initial={{ opacity: 0, y: 6 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-40px" }} className="flex flex-col items-center gap-0.5">
+                  <CountUp to={stat.to} suffix={stat.sfx} decimals={stat.dec} />
+                  <span className="font-ui text-[10px] uppercase tracking-wider text-gray-500">{stat.label}</span>
+                </motion.div>
+              ));
+            })()}
           </div>
         </div>
       </section>
@@ -761,7 +773,7 @@ export default function LandingPage() {
       <footer className="relative z-10 border-t border-white/[0.04] py-5 px-5">
         <div className="mx-auto max-w-6xl flex flex-col md:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <div className="flex h-5 w-5 items-center justify-center rounded bg-[#19BEA4] font-display text-[10px] font-bold text-[#1E2526]">G</div>
+            <LogoMark className="h-5 w-5" />
             <span className="font-ui text-[11px] text-gray-500">Gambit on Somnia</span>
           </div>
           <p className="font-ui text-[10px] text-gray-600">Built for the Somnia × DreamDEX Event Contracts Hackathon</p>

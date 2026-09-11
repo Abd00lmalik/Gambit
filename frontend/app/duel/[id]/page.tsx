@@ -329,6 +329,15 @@ export default function DuelPage({ params }: { params: { id: string } }) {
 
   // ── Result popup wiring ─────────────────────────────────────────────────
   const isParticipant = isCreator || isJoiner;
+  // Spectator view: a non-participant viewing a decided duel sees who won.
+  // Pure display — reads the same already-computed oracle result, no new
+  // settlement or winner-determination logic.
+  const spectatorWinnerAddress =
+    !isParticipant && hasJoined && effectiveIsResolved && oracleWinningSide
+      ? oracleWinningSide === creatorSide
+        ? duel.playerA
+        : duel.playerB
+      : null;
   const refundPopupFlow = canCreatorRefund && !isStuck;
   const winLossPopupFlow = hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isParticipant;
   const resultKind: ResultKind = refundPopupFlow ? "refund" : isWinner ? "won" : "lost";
@@ -347,7 +356,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
 
   const settlementReasonText =
     settlementGate.state === "blocked" && settlementGate.staleMarketRecord
-      ? "DreamDEX rotated this market slot: the on-chain market record belongs to an older window, so the contract refuses classic settlement to protect the funds. Use the Cashout button — it settles via the oracle-attested path signed from DreamDEX's verified outcome."
+      ? "DreamDEX rotated this market slot: the on-chain market record belongs to an older window, so the contract refuses classic settlement to protect the funds. Use the Cashout button: it settles via the oracle-attested path signed from DreamDEX's verified outcome."
       : settlementGate.reason
         ? `The contract refused this settlement: "${settlementGate.reason}". Your funds stay safely escrowed.`
         : "The contract refused this settlement. Your funds stay safely escrowed.";
@@ -392,7 +401,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
               phase === "settled" || phase === "ended-resolved" ? "bg-up" :
               phase === "open-expired" ? "bg-down" : "bg-gray-400"
             }`} />
-            {isStuck ? "Stuck — Recovery Needed" : duelView.label}
+            {isStuck ? "Stuck: Recovery Needed" : duelView.label}
           </span>
         </motion.div>
 
@@ -454,11 +463,34 @@ export default function DuelPage({ params }: { params: { id: string } }) {
                 ?
               </div>
               <span className="font-body text-xs text-gray-500 text-center">
-                {phase === "open-expired" ? "No opponent — expired" : "Waiting for opponent"}
+                {phase === "open-expired" ? "No opponent, expired" : "Waiting for opponent"}
               </span>
             </div>
           )}
         </motion.div>
+
+        {/* Spectator result banner: who won, for non-participants */}
+        {spectatorWinnerAddress && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="mb-6 flex items-center justify-center gap-3 rounded-xl border border-teal/20 bg-teal/5 p-4"
+          >
+            <span className="font-display text-2xl" aria-hidden>🏆</span>
+            <div className="flex items-center gap-2">
+              <PlayerAvatar address={spectatorWinnerAddress} size="md" />
+              <div>
+                <p className="font-display text-sm font-bold text-foam">
+                  <PlayerNameInline address={spectatorWinnerAddress} /> won this duel
+                </p>
+                <p className="font-body text-xs text-gray-400">
+                  {oracleWinningSide} side beat {oracleWinningSide === "UP" ? "DOWN" : "UP"} · pot {duel.stakeAmount} STT × 2
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
 
         {/* Chart with actual strike price */}
         <motion.div
@@ -580,11 +612,11 @@ export default function DuelPage({ params }: { params: { id: string } }) {
               OLD window's outcome. Funds stay safely escrowed instead. */}
           {state === DuelState.LOCKED && effectiveIsResolved && (marketRecordStale || oracleVsContractMismatch) && (
             <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/5 p-4 text-center">
-              <p className="font-display text-base font-bold text-yellow-400 mb-1">Result verified — escrowed pending settlement path</p>
+              <p className="font-display text-base font-bold text-yellow-400 mb-1">Result verified, escrowed pending settlement path</p>
               <p className="font-body text-xs text-gray-400 leading-relaxed">
                 DreamDEX rotated this market slot: the on-chain market record still belongs to an older
                 window, so classic on-chain settlement is refused. The verified outcome
-                {oracleWinningSide ? ` (${oracleWinningSide} won)` : ""} is shown above — the winner can
+                {oracleWinningSide ? ` (${oracleWinningSide} won)` : ""} is shown above; the winner can
                 cash out via the oracle-attested settlement path (signed from the same DreamDEX oracle data).
               </p>
             </div>
@@ -800,7 +832,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           {/* Contest in progress (market window still open) */}
           {hasJoined && state === DuelState.LOCKED && phase === "live" && (
             <div className="rounded-xl border border-yellow-400/20 bg-yellow-400/5 p-4 text-center">
-              <p className="font-body text-sm text-yellow-400">Contest live — the result is decided when the market closes.</p>
+              <p className="font-body text-sm text-yellow-400">Contest live. The result is decided when the market closes.</p>
             </div>
           )}
 
@@ -829,10 +861,10 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           <h3 className="font-display text-sm font-bold text-foam mb-3">Duel Details</h3>
           <div className="grid grid-cols-2 gap-3">
             <InfoRow label="Contract" value={`${duelAddress.slice(0, 8)}...`} />
-            <InfoRow label="Market" value={duel.marketAddress ? `${duel.marketAddress.slice(0, 8)}...` : "—"} />
+            <InfoRow label="Market" value={duel.marketAddress ? `${duel.marketAddress.slice(0, 8)}...` : "-"} />
             <InfoRow label="Stake" value={`${duel.stakeAmount || "0"} STT`} />
             <InfoRow label="Pot" value={`${duel.pot || "0"} STT`} />
-            <InfoRow label="Fee" value={duel.owner ? "2.5%" : "—"} />
+            <InfoRow label="Fee" value={duel.owner ? "2.5%" : "-"} />
             <InfoRow label="Chain" value="Somnia Testnet" />
           </div>
         </motion.div>
@@ -858,6 +890,11 @@ export default function DuelPage({ params }: { params: { id: string } }) {
       </div>
     </div>
   );
+}
+
+function PlayerNameInline({ address }: { address: string }) {
+  const { displayName } = useSupabasePfp(address);
+  return <>{displayName || `${address.slice(0, 6)}…${address.slice(-4)}`}</>;
 }
 
 function PlayerCard({ label, address, side, stake, isCreator, isActive }: {

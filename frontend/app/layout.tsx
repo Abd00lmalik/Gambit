@@ -5,8 +5,15 @@ import NetworkGuard from "@/components/NetworkGuard";
 import Providers from "@/components/Providers";
 
 export const metadata: Metadata = {
-  title: "Gambit — DreamDEX Duel Layer",
+  title: "Gambit: DreamDEX Duel Layer",
   description: "DreamDEX gives you the market. Gambit gives you someone to trade against.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/logo.png", type: "image/png" },
+    ],
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

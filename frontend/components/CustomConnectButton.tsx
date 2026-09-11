@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { useConnect, useAccount, useDisconnect } from "wagmi";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -112,6 +113,7 @@ export default function CustomConnectButton({ className }: CustomConnectButtonPr
   const { connectors, connect, isPending } = useConnect();
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
+  const router = useRouter();
   const [showModal, setShowModal] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -163,6 +165,15 @@ export default function CustomConnectButton({ className }: CustomConnectButtonPr
               exit={{ opacity: 0, y: -8 }}
               className="absolute right-0 top-full mt-2 w-48 rounded-xl border border-white/10 bg-[#1E2526] p-2 shadow-xl z-50"
             >
+              <button
+                onClick={() => {
+                  router.push(`/u/${address}`);
+                  setShowDropdown(false);
+                }}
+                className="w-full rounded-lg px-4 py-2 text-left font-body text-sm text-[#D7FAFC] transition-all hover:bg-white/5 cursor-pointer"
+              >
+                Profile
+              </button>
               <button
                 onClick={() => {
                   disconnect();
