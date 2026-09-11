@@ -74,8 +74,10 @@ async function fetchChunkWithRetry(
         toBlock: to,
       });
     } catch (e) {
-      if (attempt === retries - 1) return [];
-      await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+      // Never swallow a failed chunk: returning [] here made a flaky RPC burst
+      // paint "No open challenges" and the next data only arrived 30s later.
+      if (attempt === retries - 1) throw e;
+      await new Promise((r) => setTimeout(r, 400 * 2 ** attempt + Math.floor(Math.random() * 200)));
     }
   }
   return [];
@@ -210,6 +212,7 @@ export function useDuelCreatedEvents() {
   const fetchDuels = useCallback(async (forceFullResync = false) => {
     if (!client) return;
     if (isInitialLoad.current) setIsLoading(true);
+    let succeeded = false;
 
     try {
       const latest = await client.getBlockNumber();
@@ -254,6 +257,7 @@ export function useDuelCreatedEvents() {
 
       const newDuels = logsToDuels(allLogs, stateMap, assetMap);
 
+      succeeded = true;
       if (isInitialLoad.current) {
         setDuels(newDuels.sort((a, b) => b.createdBlock - a.createdBlock));
       } else {
@@ -269,9 +273,17 @@ export function useDuelCreatedEvents() {
       }
     } catch (e) {
       console.error("Failed to fetch duel events:", e);
+      // A transient RPC failure during the FIRST paint must not render the
+      // empty state (that read as "slow/zero duels"). Stay in the loading
+      // state and retry shortly.
+      if (isInitialLoad.current) {
+        setTimeout(() => { if (isInitialLoad.current) fetchDuels(); }, 3000);
+      }
     } finally {
-      isInitialLoad.current = false;
-      setIsLoading(false);
+      if (succeeded || !isInitialLoad.current) {
+        isInitialLoad.current = false;
+        setIsLoading(false);
+      }
     }
   }, [client]);
 
@@ -298,7 +310,13 @@ export function useDuelCreatedEvents() {
         return;
       }
       const from = to - CHUNK * BigInt(BACKFILL_WAVE) + BigInt(1);
-      const logs = await parallelScan(client, from < DUEL_HISTORY_FLOOR_BLOCK ? DUEL_HISTORY_FLOOR_BLOCK : from, to);
+      let logs: any[];
+      try {
+        logs = await parallelScan(client, from < DUEL_HISTORY_FLOOR_BLOCK ? DUEL_HISTORY_FLOOR_BLOCK : from, to);
+      } catch (e) {
+        console.warn("[DuelEvents] backfill wave failed, will retry next tick", e);
+        return; // floor unchanged; the interval retries the same range
+      }
       if (cancelled) return;
       backfillFloor.current = from < DUEL_HISTORY_FLOOR_BLOCK ? DUEL_HISTORY_FLOOR_BLOCK : from;
       try { localStorage.setItem(BACKFILL_KEY, backfillFloor.current.toString()); } catch {}

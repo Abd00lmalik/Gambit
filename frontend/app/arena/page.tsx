@@ -182,26 +182,11 @@ function ArenaContent() {
       return parseFloat(b.stakeAmount) - parseFloat(a.stakeAmount);
     });
 
-  // ── Infinite scroll: show 6 initially, reveal 3 more per scroll signal ──
+  // ── Explicit pagination: show 6 initially, "Show More" reveals 3 per click ──
   const [visibleCount, setVisibleCount] = useState(6);
   useEffect(() => {
     setVisibleCount(6);
   }, [filter, sort]);
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          setVisibleCount((n) => (n < filtered.length ? n + 3 : n));
-        }
-      },
-      { rootMargin: "600px" }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  });
   const visible = filtered.slice(0, visibleCount);
   const hasMore = visibleCount < filtered.length;
 
@@ -304,10 +289,15 @@ function ArenaContent() {
           <EmptyState />
         )}
 
-        {/* Infinite-scroll sentinel + progress */}
+        {/* Explicit "Show More" pagination (no auto-scroll loading) */}
         {hasMore && !isLoading && (
-          <div ref={sentinelRef} className="flex justify-center py-6">
-            <div className="h-6 w-6 border-2 border-teal border-t-transparent rounded-full animate-spin" />
+          <div className="flex justify-center py-6">
+            <button
+              onClick={() => setVisibleCount((n) => n + 3)}
+              className="min-h-[44px] rounded-xl border border-teal/30 bg-teal/[0.06] px-6 py-2 font-body text-sm font-medium text-teal transition-all hover:bg-teal/[0.12] active:scale-[0.98] cursor-pointer"
+            >
+              Show More ({filtered.length - visibleCount} remaining)
+            </button>
           </div>
         )}
       </div>
