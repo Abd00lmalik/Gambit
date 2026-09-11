@@ -9,7 +9,7 @@ import { fetchMarketAssets } from "@/lib/dreamdex";
 
 const CHUNK = BigInt(900);
 const MAX_RETRIES_PER_CHUNK = 3;
-const PARALLEL_BATCH = 6;
+const PARALLEL_BATCH = 8;
 const CLONE_READ_BATCH = 20;
 // Somnia produces ~10.5 blocks/s and this RPC rejects getLogs spans over 1000
 // blocks, so the INITIAL window only needs to cover fresh duels since the last
@@ -20,12 +20,14 @@ const INITIAL_RANGE = BigInt(1_000);
 const POLL_INTERVAL = 30_000;
 const CACHE_KEY = "gambit_last_scanned_block";
 const BACKFILL_KEY = "gambit_backfill_floor";
+const DUELS_CACHE_KEY = "gambit_duels_cache_v1";
 const FULL_RESYNC_INTERVAL = 10; // Full resync every N polls
 // Backfill stops here: block where the V30 factory (the oldest one whose duels
 // still use the current DuelCreated signature) was deployed. Everything older
 // came from factories emitting a pre-creatorIsUp event shape we cannot decode.
 export const DUEL_HISTORY_FLOOR_BLOCK = BigInt("484741715");
-const BACKFILL_WAVE = 6; // parallel 900-block chunks per backfill step
+const BACKFILL_WAVE = 24; // parallel 900-block chunks per backfill pass
+const BACKFILL_TICK_MS = 1_200;
 
 export interface OnChainDuel {
   address: Address;
@@ -190,7 +192,9 @@ export function useDuelCreatedEvents() {
   const pollCount = useRef(0);
   const client = usePublicClient({ chainId: somnia.id });
 
-  // Load cached block on mount
+  // Load cached block + hydrated duel list on mount. Hydration matters:
+  // without it every fresh session started from only the last ~16 minutes of
+  // history, so settled duels read as "vanished" until backfill finished.
   useEffect(() => {
     try {
       const cached = localStorage.getItem(CACHE_KEY);
@@ -206,8 +210,22 @@ export function useDuelCreatedEvents() {
           backfillFloor.current = floor; // resume the walk where it stopped
         }
       }
+      const cachedDuels = localStorage.getItem(DUELS_CACHE_KEY);
+      if (cachedDuels) {
+        const parsed = JSON.parse(cachedDuels) as OnChainDuel[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setDuels(parsed.sort((a, b) => b.createdBlock - a.createdBlock));
+          setIsLoading(false);
+        }
+      }
     } catch {}
   }, []);
+
+  // Persist the duels list so the next session loads instantly.
+  useEffect(() => {
+    if (duels.length === 0) return;
+    try { localStorage.setItem(DUELS_CACHE_KEY, JSON.stringify(duels)); } catch {}
+  }, [duels]);
 
   const fetchDuels = useCallback(async (forceFullResync = false) => {
     if (!client) return;
@@ -259,7 +277,13 @@ export function useDuelCreatedEvents() {
 
       succeeded = true;
       if (isInitialLoad.current) {
-        setDuels(newDuels.sort((a, b) => b.createdBlock - a.createdBlock));
+        // MERGE, never replace: a hydrated cache may already hold older duels
+        // (settled ones) that this fresh 1000-block scan cannot see.
+        setDuels((prev) => {
+          const existing = new Map(prev.map((d) => [d.address, d]));
+          for (const d of newDuels) existing.set(d.address, d);
+          return [...existing.values()].sort((a, b) => b.createdBlock - a.createdBlock);
+        });
       } else {
         setDuels((prev) => {
           const existing = new Map(prev.map((d) => [d.address, d]));
@@ -294,8 +318,11 @@ export function useDuelCreatedEvents() {
   useEffect(() => {
     if (!client) return;
     let cancelled = false;
+    let inFlight = false;
     const runBackfill = async () => {
-      if (backfillDone.current || cancelled) return;
+      if (backfillDone.current || cancelled || inFlight) return;
+      inFlight = true;
+      try {
       // First run of a fresh session: start just below the initial scan window.
       if (backfillFloor.current === BigInt(0)) {
         try {
@@ -334,8 +361,11 @@ export function useDuelCreatedEvents() {
         for (const d of older) existing.set(d.address, d);
         return [...existing.values()].sort((a, b) => b.createdBlock - a.createdBlock);
       });
+      } finally {
+        inFlight = false;
+      }
     };
-    const interval = setInterval(runBackfill, 3_000);
+    const interval = setInterval(runBackfill, BACKFILL_TICK_MS);
     return () => { cancelled = true; clearInterval(interval); };
   }, [client]);
 
