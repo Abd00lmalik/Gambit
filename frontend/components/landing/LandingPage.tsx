@@ -6,7 +6,6 @@ import { motion, useInView } from "framer-motion";
 import CustomConnectButton from "@/components/CustomConnectButton";
 import LogoMark from "@/components/LogoMark";
 import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
-import { formatEther } from "viem";
 
 /* ═══════════════════════════════════════════════════════
    DATA
@@ -748,7 +747,8 @@ export default function LandingPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {(() => {
               // Real, live in-app stats derived from on-chain duel events.
-              const volume = duels.reduce((s, d) => s + Number(formatEther(BigInt(d.stakeAmount))), 0);
+              // stakeAmount is already a human-readable ether string.
+              const volume = duels.reduce((s, d) => s + Number(d.stakeAmount), 0);
               const players = new Set<string>();
               duels.forEach((d) => { players.add(d.playerA.toLowerCase()); players.add(d.playerB.toLowerCase()); });
               const active = duels.filter((d) => d.state === 1).length;

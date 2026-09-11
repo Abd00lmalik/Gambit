@@ -192,10 +192,12 @@ export function useDuelCreatedEvents() {
   const pollCount = useRef(0);
   const client = usePublicClient({ chainId: somnia.id });
 
-  // Load cached block + hydrated duel list on mount. Hydration matters:
-  // without it every fresh session started from only the last ~16 minutes of
-  // history, so settled duels read as "vanished" until backfill finished.
+  // Load cached block + hydrated duel list on mount, then hydrate instantly
+  // from the server-side duel index. The chain scan below stays the freshness
+  // mechanism; the server index exists so Arena shows the FULL duel list the
+  // moment it opens, even on a brand-new browser with an empty localStorage.
   useEffect(() => {
+    let cancelled = false;
     try {
       const cached = localStorage.getItem(CACHE_KEY);
       if (cached) {
@@ -219,6 +221,19 @@ export function useDuelCreatedEvents() {
         }
       }
     } catch {}
+    fetch("/api/duels")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.duels?.length) return;
+        setDuels((prev) => {
+          const existing = new Map(prev.map((d) => [d.address, d]));
+          for (const d of data.duels as OnChainDuel[]) existing.set(d.address, d);
+          return [...existing.values()].sort((a, b) => b.createdBlock - a.createdBlock);
+        });
+        setIsLoading(false);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
   // Persist the duels list so the next session loads instantly.
