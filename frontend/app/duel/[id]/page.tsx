@@ -333,12 +333,17 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const winLossPopupFlow = hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isParticipant;
   const resultKind: ResultKind = refundPopupFlow ? "refund" : isWinner ? "won" : "lost";
   const resultPopupShow = !popupDismissed && popupReady && (refundPopupFlow || winLossPopupFlow);
-  const handlePopupDismiss = useCallback(() => {
+  // Plain function, NOT a hook: this code sits after the early returns above,
+  // so a conditional useCallback here violated the Rules of Hooks (hook count
+  // grew when duel data arrived → React error #310 crashed every duel page on
+  // load). ResultPopup takes onDismiss as a plain prop — identity stability
+  // is not required.
+  const handlePopupDismiss = () => {
     dismissResultPopup();
     // The loser's flow ends the duel-card interaction: OK closes the popup and
     // exits the duel page. Winner/refund keep the page open (they may act).
     if (resultKind === "lost") router.push("/arena");
-  }, [dismissResultPopup, resultKind, router]);
+  };
 
   const settlementReasonText =
     settlementGate.state === "blocked" && settlementGate.staleMarketRecord
