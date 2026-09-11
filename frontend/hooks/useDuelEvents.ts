@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { type Address, formatEther } from "viem";
 import { usePublicClient } from "wagmi";
 import { somnia } from "@/lib/config";
-import { FACTORY_ADDRESS, WAGER_ABI } from "@/lib/contracts";
+import { FACTORY_ADDRESS, LEGACY_FACTORY_ADDRESSES, WAGER_ABI } from "@/lib/contracts";
 import { fetchMarketAssets } from "@/lib/dreamdex";
 
 const CHUNK = BigInt(900);
@@ -49,10 +49,13 @@ async function fetchChunkWithRetry(
   to: bigint,
   retries = MAX_RETRIES_PER_CHUNK
 ): Promise<any[]> {
+  // Scan the current factory AND all legacy ones: pre-V31 duels must keep
+  // appearing in the Arena listing after a redeployment.
+  const factories: Address[] = [FACTORY_ADDRESS, ...LEGACY_FACTORY_ADDRESSES];
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await client.getLogs({
-        address: FACTORY_ADDRESS,
+        address: factories,
         event: DUEL_CREATED_EVENT,
         fromBlock: from,
         toBlock: to,

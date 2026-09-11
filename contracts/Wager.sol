@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IBinaryMarket} from "./interfaces/IBinaryMarket.sol";
 import {IBinaryMarketsModule} from "./interfaces/IBinaryMarketsModule.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 /// @notice Per-duel escrow logic contract. Deployed once; cloned per wager via GambitFactory.
 /// @dev Uses EIP-1167 clone pattern. State set via initialize(), not constructor.
@@ -46,7 +47,20 @@ contract Wager {
     /// @notice Emitted when factory cancels an expired CREATED duel.
     event FactoryCancelled(uint256 timestamp);
 
+    /// @notice Emitted when a duel is settled via an oracle-signed attestation.
+    event OracleSettled(address indexed winner, bool upWon, uint256 amount);
+
     // ── Initialization ─────────────────────────────────────
+
+    /// @notice Trusted oracle attestation signer for settleByOracle().
+    /// @dev Immutable, set once in the constructor. Safe with EIP-1167 clones:
+    ///      the value is embedded in the implementation's runtime code, which
+    ///      every clone delegates to. address(0) disables settleByOracle().
+    address public immutable oracleSigner;
+
+    constructor(address _oracleSigner) {
+        oracleSigner = _oracleSigner;
+    }
 
     /// @notice Initialize a new duel instance (called by factory immediately after cloning).
     function initialize(
@@ -208,6 +222,62 @@ contract Wager {
         } else {
             (bool ok, ) = winner.call{value: pot}("");
             require(ok, "payout failed");
+        }
+    }
+
+    /// @notice Oracle-attested settlement for duels whose market slot registration
+    ///      is stale (DreamDEX recycles slot ids across time windows while the
+    ///      BinaryMarketsModule holds a ONE-TIME registration — proven on-chain
+    ///      2026-09-10, which makes settle()'s "stale market record" guard
+    ///      permanent for duels created on recycled slot ids).
+    /// @dev Additive alternative payout path; settle() above is unchanged.
+    ///      The payout block below mirrors settle()'s EXACTLY (same fee math,
+    ///      same winner derivation from creatorIsUp). A differential test
+    ///      (test/WagerOracleSettle.t.sol) proves both paths pay identically —
+    ///      if settle()'s payout math ever changes, change it here too and fix
+    ///      that test.
+    /// @param upWon Outcome attested by the trusted oracle signer: true = UP won.
+    /// @param windowEnd The duel's contest end (must equal joinDeadline — binds
+    ///        the signature to THIS window; creation enforces
+    ///        joinDeadline ≤ marketExpiry − 60, so past joinDeadline the window
+    ///        is provably closed).
+    /// @param sig EIP-191 signature by oracleSigner over
+    ///        keccak256(abi.encode(address(this), block.chainid, upWon, windowEnd))
+    function settleByOracle(bool upWon, uint256 windowEnd, bytes calldata sig) external inState(WagerState.LOCKED) {
+        require(oracleSigner != address(0), "no oracle signer");
+        require(playerB != address(0), "no opponent");
+        require(windowEnd == joinDeadline, "bad window");
+        require(block.timestamp > windowEnd, "window open");
+
+        bytes32 digest = keccak256(abi.encode(address(this), block.chainid, upWon, windowEnd));
+        address signer = ECDSA.recover(
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest)),
+            sig
+        );
+        require(signer == oracleSigner, "bad oracle signature");
+
+        state = WagerState.SETTLED;
+
+        // Winner derivation identical to settle(): compare the attested outcome
+        // against the sides each player picked (stored at creation).
+        address winner = (upWon == creatorIsUp) ? playerA : playerB;
+
+        uint256 pot = address(this).balance;
+
+        if (feeBps > 0 && feeRecipient != address(0)) {
+            uint256 fee = (pot * feeBps) / 10000;
+            uint256 winnerPayout = pot - fee;
+
+            (bool feeOk, ) = feeRecipient.call{value: fee}("");
+            require(feeOk, "fee transfer failed");
+
+            (bool winOk, ) = winner.call{value: winnerPayout}("");
+            require(winOk, "winner transfer failed");
+            emit OracleSettled(winner, upWon, winnerPayout);
+        } else {
+            (bool ok, ) = winner.call{value: pot}("");
+            require(ok, "payout failed");
+            emit OracleSettled(winner, upWon, pot);
         }
     }
 

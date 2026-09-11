@@ -18,7 +18,7 @@ contract DeployFactory is Script {
             250,
             0.1 ether,
             100 ether,
-            address(0)
+            address(0), address(0) // oracleSigner (disabled)
         );
 
         vm.stopBroadcast();

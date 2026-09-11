@@ -82,11 +82,11 @@ async function main() {
   console.log("\n--- Step 1b: Deploy GambitFactory ---");
   const factoryBytecode = loadArtifactBytecode("GambitFactory");
 
-  // Constructor: (address _feeRecipient, uint256 _defaultFeeBps, uint256 _minStake, uint256 _maxStake, address _implementation)
+  // Constructor: (address _feeRecipient, uint256 _defaultFeeBps, uint256 _minStake, uint256 _maxStake, address _implementation, address _oracleSigner)
   const coder = ethers.AbiCoder.defaultAbiCoder();
   const constructorArgs = coder.encode(
-    ["address", "uint256", "uint256", "uint256", "address"],
-    [walletA.address, 250, ethers.parseEther("0.1"), ethers.parseEther("100"), wagerImplAddr]
+    ["address", "uint256", "uint256", "uint256", "address", "address"],
+    [walletA.address, 250, ethers.parseEther("0.1"), ethers.parseEther("100"), wagerImplAddr, ethers.ZeroAddress]
   );
   const factoryDeployData = factoryBytecode + constructorArgs.slice(2);
 

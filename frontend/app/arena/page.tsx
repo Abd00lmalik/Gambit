@@ -8,7 +8,7 @@ import { useDuelCreatedEvents } from "@/hooks/useDuelEvents";
 import { usePublicClient } from "wagmi";
 import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { somnia } from "@/lib/config";
-import { FACTORY_ADDRESS, FACTORY_ABI } from "@/lib/contracts";
+import { FACTORY_ADDRESS, LEGACY_FACTORY_ADDRESSES, FACTORY_ABI } from "@/lib/contracts";
 import { decodeEventLog } from "viem";
 import { DuelState } from "@/lib/contracts";
 import { deriveDuelView, type DuelView } from "@/lib/duelViewState";
@@ -31,9 +31,13 @@ async function resolveHighlightToClone(
     if (!receipt) return null;
     // Decode with the factory ABI — the DuelCreated topic hash changed when
     // `creatorIsUp` was added to the event, so a hardcoded constant silently
-    // stopped matching and the ?highlight=… fallback never resolved.
-    for (const log of receipt.logs) {
-      if (log.address.toLowerCase() !== FACTORY_ADDRESS.toLowerCase()) continue;
+    // stopped matching and the ?highlight=… fallback never resolved.      // Cover every deployed factory: a ?highlight= tx can be a DuelCreated
+      // from the current factory OR any legacy one.
+      const knownFactories = new Set(
+        [FACTORY_ADDRESS, ...LEGACY_FACTORY_ADDRESSES].map((a) => a.toLowerCase())
+      );
+      for (const log of receipt.logs) {
+        if (!knownFactories.has(log.address.toLowerCase())) continue;
       try {
         const decoded = decodeEventLog({
           abi: FACTORY_ABI,

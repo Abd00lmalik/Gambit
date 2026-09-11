@@ -84,7 +84,8 @@ contract GambitTest is Test {
             FEE_BPS,
             MIN_STAKE,
             MAX_STAKE,
-            address(0) // deploy inline
+            address(0), // deploy inline
+            address(0)  // oracleSigner (disabled)
         );
 
         // No-fee factory
@@ -93,7 +94,7 @@ contract GambitTest is Test {
             0, // no fee
             MIN_STAKE,
             MAX_STAKE,
-            address(0)
+            address(0), address(0) // oracleSigner (disabled)
         );
 
         // High-fee factory (10%)
@@ -102,7 +103,7 @@ contract GambitTest is Test {
             1000, // 10%
             MIN_STAKE,
             MAX_STAKE,
-            address(0)
+            address(0), address(0) // oracleSigner (disabled)
         );
 
         // Rounding factory (tiny stake to test rounding)
@@ -111,7 +112,7 @@ contract GambitTest is Test {
             FEE_BPS,
             1, // 1 wei min
             MAX_STAKE,
-            address(0)
+            address(0), address(0) // oracleSigner (disabled)
         );
 
         // Markets
@@ -909,7 +910,7 @@ contract GambitTest is Test {
             1001, // > 10%
             MIN_STAKE,
             MAX_STAKE,
-            address(0)
+            address(0), address(0) // oracleSigner (disabled)
         );
     }
 }

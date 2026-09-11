@@ -16,7 +16,8 @@ contract DeployV26 is Script {
             250,                                           // feeBps (2.5%)
             100000000000000000,                            // minStake (0.1 STT)
             100000000000000000000,                         // subscriptionFund (100 STT)
-            0xD2383487546eAdF0266A80c65d9F70aA7EB44173    // implementation (reuses v25 Wager impl)
+            0xD2383487546eAdF0266A80c65d9F70aA7EB44173,  // implementation (reuses v25 Wager impl)
+            address(0)                                   // oracleSigner (disabled)
         );
 
         console2.log("=== V26 DEPLOYMENT COMPLETE ===");

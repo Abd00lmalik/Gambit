@@ -1,5 +1,17 @@
-export const FACTORY_ADDRESS = "0xea5f3130a5ed09929da3e156ec0308c58de6a2e1" as const;
-export const IMPLEMENTATION_ADDRESS = "0x688a7a70725fd3580b1B7218EAc28388Fe3a2a7a" as const;
+// V31 factory (2026-09-11): adds Wager.settleByOracle() — the oracle-attested
+// payout path for duels on DreamDEX's recycled market slots, where settle()'s
+// "stale market record" guard permanently blocks classic settlement (proven on-
+// chain; see test/WagerOracleSettle.t.sol). Winner determination is unchanged.
+export const FACTORY_ADDRESS = "0xDbBebaC06b5C7F2A0c1169120435A2CB1Cdd5346" as const;
+export const IMPLEMENTATION_ADDRESS = "0x55cDCD5accD78d937c982F6fc3f602B0635CC47e" as const;
+
+// Duels created before V31 came from these factories. The event scanner and
+// any per-duel factory routing must keep covering them — their clones still
+// point at the old Wager implementation and can never gain settleByOracle().
+export const LEGACY_FACTORY_ADDRESSES = [
+  "0xea5f3130a5ed09929da3e156ec0308c58de6a2e1", // V30 (creatorIsUp era)
+  "0x089079B21dD6A495D4c3f6844ABCab806fcf5d9E", // pre-creatorIsUp era
+] as const;
 export const FEE_RECIPIENT = "0x25265b9dBEb6c653b0CA281110Bb0697a9685107" as const;
 export const DEX_EVENT_CONTRACTS_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
 export const BINARY_MARKETS_MODULE_ADDRESS = "0x3ecC694Cef705358864a646142ac17A90E29e388" as const;
@@ -7,12 +19,10 @@ export const VENUE_ID_TESTNET = "0x679795a0195a1b76cdebb7c51d74e058aee92919b8c33
 export const POOL_FACTORY_ADDRESS = "0x0000000000000000000000000000000000000000" as const; // Deploy after contract deployment
 
 /**
- * Factories that created duels BEFORE the creatorIsUp (side) support was added.
- * Legacy clones can only be cancelled by the factory that created them, so flows
- * like cancel/refund must route to the duel's own factory (read factory() from the
- * clone) rather than the current one.
+ * Keep per-duel factory routing: cancel/refund must route to the factory that
+ * actually created the duel (read factory() from the clone), never assume the
+ * current FACTORY_ADDRESS created it.
  */
-export const LEGACY_FACTORY_ADDRESS = "0x089079B21dD6A495D4c3f6844ABCab806fcf5d9E" as const;
 
 export const FACTORY_ABI = [
   {
@@ -97,6 +107,24 @@ export const WAGER_ABI = [
     inputs: [],
     outputs: [],
     stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "settleByOracle",
+    inputs: [
+      { name: "upWon", type: "bool" },
+      { name: "windowEnd", type: "uint256" },
+      { name: "sig", type: "bytes" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "oracleSigner",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+    stateMutability: "view",
   },
   {
     type: "function",

@@ -267,7 +267,8 @@ export function useDuelReads(duelAddress: Address | undefined) {
   });
 
   // The factory that created this clone — needed to route cancel/refund to the
-  // right factory (legacy duels were created by LEGACY_FACTORY_ADDRESS).
+  // right factory (duels pre-V31 were created by the factories in
+  // LEGACY_FACTORY_ADDRESSES, not the current one).
   const duelFactory = useReadContract({
     address: duelAddress,
     abi: WAGER_ABI,

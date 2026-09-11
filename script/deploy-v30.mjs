@@ -81,7 +81,9 @@ const publicClient = createPublicClient({ chain: somnia, transport: http(RPC, { 
 const walletClient = createWalletClient({ account, chain: somnia, transport: http(RPC, { timeout: 60_000, retryCount: 3 }) });
 
 const FEE_RECIPIENT = "0x25265b9dBEb6c653b0CA281110Bb0697a9685107";
-const constructorArgs = [FEE_RECIPIENT, 250n, 100000000000000000n, 100000000000000000000n, "0x0000000000000000000000000000000000000000"];
+// 6th arg: oracleSigner for Wager.settleByOracle() (env-overridable; address(0) disables the oracle path)
+const ORACLE_SIGNER = process.env.ORACLE_SIGNER || "0x0000000000000000000000000000000000000000";
+const constructorArgs = [FEE_RECIPIENT, 250n, 100000000000000000n, 100000000000000000000n, "0x0000000000000000000000000000000000000000", ORACLE_SIGNER];
 
 const balance = await publicClient.getBalance({ address: account.address });
 console.log("deployer balance:", formatEther(balance), "STT");

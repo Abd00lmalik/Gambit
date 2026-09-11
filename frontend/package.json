@@ -9,7 +9,8 @@
     "lint": "next lint",
     "test:pfp": "tsx scripts/test-pfp.mts",
     "test:chart": "tsx scripts/test-chart-data.mts",
-    "test:duel-state": "tsx scripts/test-duel-state.mts"
+    "test:duel-state": "tsx scripts/test-duel-state.mts",
+    "test:revert-reason": "tsx scripts/test-revert-reason.mts"
   },
   "dependencies": {
     "@noble/hashes": "1.8.0",

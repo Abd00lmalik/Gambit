@@ -62,7 +62,7 @@ contract WagerSidesTest is Test {
             FEE_BPS,
             MIN_STAKE,
             MAX_STAKE,
-            address(0)
+            address(0), address(0) // oracleSigner (disabled)
         );
 
         marketUpWon = new MockMarket(4); // resolved
@@ -174,7 +174,7 @@ contract WagerSidesTest is Test {
 
     function test_sides_matrix_noFee() public {
         GambitFactory noFeeFactory = new GambitFactory(
-            address(feeRecipient), 0, MIN_STAKE, MAX_STAKE, address(0)
+            address(feeRecipient), 0, MIN_STAKE, MAX_STAKE, address(0), address(0) // oracleSigner (disabled)
         );
 
         MockMarket[2] memory markets = [marketUpWon, marketDownWon];

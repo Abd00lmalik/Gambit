@@ -19,7 +19,8 @@ contract DeployV27 is Script {
             250,                                 // feeBps (2.5%)
             100000000000000000,                  // minStake (0.1 STT)
             100000000000000000000,               // maxStake (100 STT)
-            address(newImpl)                     // new implementation with split handling
+            address(newImpl),                    // new implementation with split handling
+            address(0)                           // oracleSigner (disabled)
         );
 
         console2.log("=== V27 DEPLOYMENT COMPLETE ===");

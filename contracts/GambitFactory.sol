@@ -50,12 +50,14 @@ contract GambitFactory {
     /// @param _minStake Minimum stake in wei
     /// @param _maxStake Maximum stake in wei
     /// @param _implementation Pre-deployed Wager implementation (address(0) to deploy inline)
+    /// @param _oracleSigner Trusted signer for Wager.settleByOracle() (address(0) disables it)
     constructor(
         address _feeRecipient,
         uint256 _defaultFeeBps,
         uint256 _minStake,
         uint256 _maxStake,
-        address _implementation
+        address _implementation,
+        address _oracleSigner
     ) {
         require(_feeRecipient != address(0), "zero fee recipient");
         require(_defaultFeeBps <= 1000, "fee too high");
@@ -72,7 +74,7 @@ contract GambitFactory {
             require(_hasCode(_implementation), "impl has no code");
             implementation = _implementation;
         } else {
-            implementation = address(new Wager());
+            implementation = address(new Wager(_oracleSigner));
         }
     }
 

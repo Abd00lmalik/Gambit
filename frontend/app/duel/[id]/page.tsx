@@ -3,8 +3,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
-import { useAccount } from "wagmi";
-import { type Address } from "viem";
+import { useRouter } from "next/navigation";
+import { useAccount, usePublicClient } from "wagmi";
+import { encodeFunctionData, type Address } from "viem";
 import { config } from "@/lib/config";
 import AssetIcon from "@/components/AssetIcon";
 import PlayerAvatar from "@/components/PlayerAvatar";
@@ -17,8 +18,11 @@ import { deriveDuelView, duelEndedMessage } from "@/lib/duelViewState";
 import { useEnsureCorrectNetwork } from "@/hooks/useEnsureCorrectNetwork";
 import { useSupabasePfp } from "@/hooks/useSupabaseProfile";
 import { useLivePrices } from "@/hooks/useLivePrices";
-import { DuelState } from "@/lib/contracts";
+import { DuelState, WAGER_ABI, FACTORY_ABI, FACTORY_ADDRESS } from "@/lib/contracts";
 import { fetchMarketByAddress, DreamDexMarket } from "@/lib/dreamdex";
+import ResultPopup, { type ResultKind } from "@/components/ResultPopup";
+import { useSettlementGate } from "@/hooks/useSettlementGate";
+import { revertReasonFromError } from "@/lib/revertReason";
 
 const LiveChart = dynamic(() => import("@/components/LiveChart"), { ssr: false });
 
@@ -58,6 +62,137 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const resolution = useOracleResolution(duel.marketAddress, moduleExpiry);
   const actions = useDuelActions(duelAddress);
   const { isCorrectNetwork, ensureCorrectNetwork, isChecking } = useEnsureCorrectNetwork();
+  const publicClient = usePublicClient();
+  const router = useRouter();
+
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+  // ── Result popup state (restored feature) ───────────────────────────
+  // Shows once per duel per browser session (sessionStorage guard), after a
+  // short delay so resolution data has a beat to land.
+  const popupKey = `gambit-result-shown-${(duelAddress ?? "").toLowerCase()}`;
+  const [popupDismissed, setPopupDismissed] = useState(true);
+  const [popupReady, setPopupReady] = useState(false);
+  useEffect(() => {
+    setPopupReady(false);
+    let seen = false;
+    try { seen = !!sessionStorage.getItem(popupKey); } catch {}
+    setPopupDismissed(seen);
+    const t = setTimeout(() => setPopupReady(true), 800);
+    return () => clearTimeout(t);
+  }, [popupKey]);
+  const dismissResultPopup = useCallback(() => {
+    setPopupDismissed(true);
+    try { sessionStorage.setItem(popupKey, "1"); } catch {}
+  }, [popupKey]);
+
+  // ── Settlement gate: simulate settle() before asking the wallet to sign ──
+  // Root cause of the failed cashout tx 0x8c5ac5ba…b954 (decoded revert:
+  // "stale market record") is contract-level — DreamDEX recycles slot ids and
+  // the module registration is one-time. That cannot be fixed client-side,
+  // but we can stop submitting doomed txs and explain exactly why.
+  const [settleNotice, setSettleNotice] = useState<string | null>(null);
+  const [reclaimNotice, setReclaimNotice] = useState<string | null>(null);
+  // Simulates settle() while the duel is LOCKED — blocks doomed txs before the
+  // wallet is ever asked to sign, and exposes the contract's revert reason.
+  const settlementGate = useSettlementGate(duelAddress, { whenChainState: DuelState.LOCKED });
+
+  // Oracle-attested settlement for recycled slots: fetch the server attestation
+  // (outcome derived from the SAME DreamDEX oracle data as the winner display —
+  // winner determination itself is unchanged) and submit settleByOracle().
+  // The winner's own click sends the tx and pays its gas — manual claim only.
+  const settleByOraclePath = useCallback(async () => {
+    if (!duelAddress) return;
+    const res = await fetch("/api/attest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: duelAddress }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.error || "Attestation service unavailable.");
+    }
+    const att = await res.json();
+    const { writeContract } = await import("wagmi/actions");
+    await writeContract(config, {
+      address: duelAddress,
+      abi: WAGER_ABI,
+      functionName: "settleByOracle",
+      args: [att.upWon, BigInt(att.windowEnd), att.signature as `0x${string}`],
+      gas: BigInt(500000),
+    });
+  }, [duelAddress]);
+
+  const settleWithSimulation = useCallback(async () => {
+    setSettleNotice(null);
+    try {
+      if (!isCorrectNetwork) {
+        await ensureCorrectNetwork();
+        return;
+      }
+      let staleRecord = false;
+      if (publicClient && duelAddress) {
+        // Simulate first: if the contract will revert, surface the real reason
+        // instead of popping the wallet for a doomed transaction. The known
+        // recycled-slot block ("stale market record") routes to the
+        // oracle-attested payout path instead of failing.
+        const data = encodeFunctionData({ abi: WAGER_ABI, functionName: "settle", args: [] });
+        try {
+          await publicClient.call({ to: duelAddress, data });
+        } catch (simErr) {
+          if (revertReasonFromError(simErr) !== "stale market record") throw simErr;
+          staleRecord = true;
+        }
+      }
+      if (staleRecord) {
+        await settleByOraclePath();
+        return;
+      }
+      await actions.settleDuel();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : null;
+      const reason = revertReasonFromError(e);
+      setSettleNotice(
+        reason
+          ? `Settlement refused by the contract: "${reason}". Your funds stay safely escrowed.`
+          : message
+            ? `Cashout could not be completed: ${message}`
+            : "Cashout could not be completed. Please try again."
+      );
+    }
+  }, [publicClient, duelAddress, isCorrectNetwork, ensureCorrectNetwork, actions, settleByOraclePath]);
+
+  const reclaimStake = useCallback(async () => {
+    setReclaimNotice(null);
+    try {
+      if (!isCorrectNetwork) {
+        await ensureCorrectNetwork();
+        return;
+      }
+      // Use the duel's OWN factory cancelDuel() — permissionless and works
+      // before deadline if the market resolved. Legacy duels were created by
+      // the previous factory; reading factory() from the clone routes the
+      // call correctly for both old and new duels.
+      const { writeContract } = await import("wagmi/actions");
+      const targetFactory = (duel.duelFactory && duel.duelFactory !== ZERO_ADDRESS
+        ? duel.duelFactory
+        : FACTORY_ADDRESS) as Address;
+      await writeContract(config, {
+        address: targetFactory,
+        abi: FACTORY_ABI,
+        functionName: "cancelDuel",
+        args: [duelAddress],
+        gas: BigInt(5000000),
+      });
+    } catch (e) {
+      const reason = revertReasonFromError(e);
+      setReclaimNotice(
+        reason
+          ? `Reclaim refused by the contract: "${reason}".`
+          : "Reclaim could not be completed. Please try again."
+      );
+    }
+  }, [isCorrectNetwork, ensureCorrectNetwork, duel.duelFactory, duelAddress]);
 
   // Refetch duel data after join completes
   useEffect(() => {
@@ -185,9 +320,32 @@ export default function DuelPage({ params }: { params: { id: string } }) {
   const deadlinePassed = !!duel.joinDeadline && Math.floor(Date.now() / 1000) > duel.joinDeadline;
   const isStuck = state === DuelState.CREATED && deadlinePassed && market.isResolved;
 
-  // Creator refund: nobody joined, market resolved (even before deadline)
-  // Uses factory.cancelDuel() which is permissionless and works before deadline if market resolved
-  const canCreatorRefund = state === DuelState.CREATED && !hasJoined && isCreator && effectiveIsResolved;
+  // Creator refund: nobody joined and the duel is finished for the creator —
+  // either the join deadline passed or the market resolved before it (nobody
+  // would join a resolved market). Uses factory.cancelDuel(), permissionless.
+  const canCreatorRefund =
+    state === DuelState.CREATED && !hasJoined && isCreator &&
+    (deadlinePassed || effectiveIsResolved);
+
+  // ── Result popup wiring ─────────────────────────────────────────────────
+  const isParticipant = isCreator || isJoiner;
+  const refundPopupFlow = canCreatorRefund && !isStuck;
+  const winLossPopupFlow = hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isParticipant;
+  const resultKind: ResultKind = refundPopupFlow ? "refund" : isWinner ? "won" : "lost";
+  const resultPopupShow = !popupDismissed && popupReady && (refundPopupFlow || winLossPopupFlow);
+  const handlePopupDismiss = useCallback(() => {
+    dismissResultPopup();
+    // The loser's flow ends the duel-card interaction: OK closes the popup and
+    // exits the duel page. Winner/refund keep the page open (they may act).
+    if (resultKind === "lost") router.push("/arena");
+  }, [dismissResultPopup, resultKind, router]);
+
+  const settlementReasonText =
+    settlementGate.state === "blocked" && settlementGate.staleMarketRecord
+      ? "DreamDEX rotated this market slot: the on-chain market record belongs to an older window, so the contract refuses classic settlement to protect the funds. Use the Cashout button — it settles via the oracle-attested path signed from DreamDEX's verified outcome."
+      : settlementGate.reason
+        ? `The contract refused this settlement: "${settlementGate.reason}". Your funds stay safely escrowed.`
+        : "The contract refused this settlement. Your funds stay safely escrowed.";
 
   // ── Shared derived view state ────────────────────────────────────────────
   // The on-chain Wager.state stays LOCKED until someone pushes settlement, so
@@ -420,10 +578,26 @@ export default function DuelPage({ params }: { params: { id: string } }) {
               <p className="font-display text-base font-bold text-yellow-400 mb-1">Result verified — escrowed pending settlement path</p>
               <p className="font-body text-xs text-gray-400 leading-relaxed">
                 DreamDEX rotated this market slot: the on-chain market record still belongs to an older
-                window, so on-chain settlement could pay the wrong side. The verified outcome
-                {oracleWinningSide ? ` (${oracleWinningSide} won)` : ""} is shown above and your stake stays
-                safely escrowed in the duel contract until settlement for rotated windows is enabled.
+                window, so classic on-chain settlement is refused. The verified outcome
+                {oracleWinningSide ? ` (${oracleWinningSide} won)` : ""} is shown above — the winner can
+                cash out via the oracle-attested settlement path (signed from the same DreamDEX oracle data).
               </p>
+            </div>
+          )}
+
+          {/* Live settlement gate: the simulation says settle() will revert —
+              surface the CONTRACT's own reason instead of a doomed tx. */}
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && settlementGate.state === "blocked" && (
+            <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/5 p-4 text-center">
+              <p className="font-display text-base font-bold text-yellow-400 mb-1">Cashout blocked by the duel contract</p>
+              <p className="font-body text-xs text-gray-400 leading-relaxed">{settlementReasonText}</p>
+            </div>
+          )}
+
+          {/* Transient settlement error (revert reason caught at claim time) */}
+          {settleNotice && (
+            <div className="rounded-xl border border-down/30 bg-down/5 p-4 text-center">
+              <p className="font-body text-xs text-down leading-relaxed">{settleNotice}</p>
             </div>
           )}
 
@@ -457,7 +631,7 @@ export default function DuelPage({ params }: { params: { id: string } }) {
           {/* Claim button — only visible to the winner when the market has
               GENUINELY and FINALLY resolved (oracle-verified) and the on-chain
               market record is consistent (settle() can actually pay) */}
-          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isWinner && !marketRecordStale && !oracleVsContractMismatch && (
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && isWinner && !oracleVsContractMismatch && (settlementGate.state !== "blocked" || settlementGate.staleMarketRecord) && (
             <div className="rounded-xl border border-up/30 bg-up/5 p-5 mb-3">
               <div className="text-center mb-4">
                 <p className="font-display text-2xl font-bold text-up mb-1">You Won!</p>
@@ -466,16 +640,8 @@ export default function DuelPage({ params }: { params: { id: string } }) {
                 </p>
               </div>
               <button
-                disabled={actions.isPending || isChecking}
-                onClick={async () => {
-                  try {
-                    if (!isCorrectNetwork) {
-                      await ensureCorrectNetwork();
-                      return;
-                    }
-                    await actions.settleDuel();
-                  } catch {}
-                }}
+                disabled={actions.isPending || isChecking || settlementGate.state === "checking"}
+                onClick={settleWithSimulation}
                 className="min-h-[52px] w-full rounded-xl bg-up py-3 font-display text-base font-bold text-carbon transition-all hover:bg-up/80 hover:shadow-lg hover:shadow-up/20 active:scale-[0.97] disabled:opacity-70"
               >
                 {actions.isPending
@@ -484,25 +650,19 @@ export default function DuelPage({ params }: { params: { id: string } }) {
                     ? "Switching Network..."
                     : !isCorrectNetwork
                       ? "Switch to Somnia Testnet"
-                      : "Cashout →"}
+                      : settlementGate.state === "checking"
+                        ? "Verifying settlement..."
+                        : "Cashout →"}
               </button>
             </div>
           )}
 
           {/* Market genuinely resolved but connected wallet is not the winner —
               settle is permissionless, anyone can push the payout through */}
-          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isWinner && !marketRecordStale && !oracleVsContractMismatch && (
+          {hasJoined && state === DuelState.LOCKED && effectiveIsResolved && !isWinner && !marketRecordStale && !oracleVsContractMismatch && settlementGate.state !== "blocked" && (
             <button
-              disabled={actions.isPending || isChecking}
-              onClick={async () => {
-                try {
-                  if (!isCorrectNetwork) {
-                    await ensureCorrectNetwork();
-                    return;
-                  }
-                  await actions.settleDuel();
-                } catch {}
-              }}
+              disabled={actions.isPending || isChecking || settlementGate.state === "checking"}
+              onClick={settleWithSimulation}
               className="min-h-[52px] w-full rounded-xl bg-teal py-3 font-display text-base font-bold text-carbon transition-all hover:bg-teal-light hover:shadow-lg hover:shadow-teal/20 active:scale-[0.97] disabled:opacity-70"
             >
               {actions.isPending
@@ -571,39 +731,17 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             </div>
           )}
 
-          {/* Creator refund — nobody joined, market resolved */}
+          {/* Creator refund — nobody joined, deadline passed or market resolved */}
           {canCreatorRefund && !isStuck && (
             <div className="rounded-xl border border-yellow-400/30 bg-yellow-400/5 p-4">
               <p className="font-body text-sm text-yellow-400 font-medium mb-3">
-                Nobody joined this duel and the market has resolved. Reclaim your stake.
+                {deadlinePassed
+                  ? "Nobody joined before the deadline. Reclaim your stake."
+                  : "Nobody joined this duel and the market has resolved. Reclaim your stake."}
               </p>
               <button
                 disabled={actions.isPending || isChecking}
-                onClick={async () => {
-                  try {
-                    if (!isCorrectNetwork) {
-                      await ensureCorrectNetwork();
-                      return;
-                    }
-                    // Use the duel's OWN factory cancelDuel() — permissionless and
-                    // works before deadline if market resolved. Legacy duels were
-                    // created by the previous factory; reading factory() from the
-                    // clone routes the call correctly for both old and new duels.
-                    const { writeContract } = await import("wagmi/actions");
-                    const { FACTORY_ADDRESS } = await import("@/lib/contracts");
-                    const { FACTORY_ABI } = await import("@/lib/contracts");
-                    const targetFactory = (duel.duelFactory && duel.duelFactory !== "0x0000000000000000000000000000000000000000"
-                      ? duel.duelFactory
-                      : FACTORY_ADDRESS) as Address;
-                    await writeContract(config, {
-                      address: targetFactory,
-                      abi: FACTORY_ABI,
-                      functionName: "cancelDuel",
-                      args: [duelAddress],
-                      gas: BigInt(5000000),
-                    });
-                  } catch {}
-                }}
+                onClick={reclaimStake}
                 className="min-h-[52px] w-full rounded-xl bg-yellow-400 py-3 font-display text-base font-bold text-carbon transition-all hover:bg-yellow-400/80 active:scale-[0.97]"
               >
                 {actions.isPending
@@ -614,6 +752,9 @@ export default function DuelPage({ params }: { params: { id: string } }) {
                       ? "Switch to Somnia Testnet"
                       : "Reclaim Stake →"}
               </button>
+              {reclaimNotice && (
+                <p className="font-body text-xs text-down mt-3">{reclaimNotice}</p>
+              )}
             </div>
           )}
 
@@ -690,6 +831,25 @@ export default function DuelPage({ params }: { params: { id: string } }) {
             <InfoRow label="Chain" value="Somnia Testnet" />
           </div>
         </motion.div>
+
+        {/* Result popup — restored feature: fires once per duel per session the
+            moment genuine resolution (or reclaim eligibility) is detected.
+            Loser: OK dismisses and exits the duel card. Winner: Cashout runs the
+            settlement-gated claim. Creator (no joiner): Reclaim Stake. */}
+        <ResultPopup
+          show={resultPopupShow}
+          kind={resultKind}
+          pot={duel.pot}
+          onDismiss={handlePopupDismiss}
+          onClaim={
+            resultKind === "won"
+              ? settleWithSimulation
+              : resultKind === "refund"
+                ? reclaimStake
+                : undefined
+          }
+          claiming={actions.isPending || settlementGate.state === "checking"}
+        />
       </div>
     </div>
   );
