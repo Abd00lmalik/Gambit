@@ -2,7 +2,7 @@
 
 **A decentralized prediction market platform built on blockchain for peer-to-peer wagering and parimutuel betting on DreamDEX events.**
 
-🌐 **Live Demo**: [gambit-orpin.vercel.app](https://gambit-orpin.vercel.app)
+🌐 **Live Demo**: [gambit-orpin.vercel.app](https://playgambit.vercel.app)
 
 ---
 
